@@ -1,0 +1,258 @@
+---
+title: "CKME 136 Readmission Data Analysis"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r}
+# uncomment the next lines to install required packages and load the libraries
+#install.packages("Hmisc")
+#install.packages("summarytools")
+#install.packages("pastecs")
+library("pastecs")
+library("summarytools")
+library("Hmisc")
+
+```
+
+```{r}
+readmission_data <- read.csv("C:/Data/Education/Ryerson/CKME136/dataset_diabetes/diabetic_data.csv")
+## view the first few rows of the data
+head(readmission_data)
+```
+
+```{r}
+data_desc <- read.csv("C:/Data/Education/Ryerson/CKME136/dataset_diabetes/IDs_mapping.csv")
+# view the first few rows of the data description
+data_desc
+```
+```{r}
+# Basic summary statistics
+# Make a vector of categorical (factor) variables
+a<- (sapply(readmission_data,class) == "factor")
+
+# Categorical variables (use describe function of Hmisc package to display summary)
+cat_vars <- readmission_data[, a]
+Hmisc::describe(cat_vars)
+for (cat_var in (1:ncol(cat_vars))){
+  barplot(table(cat_vars[, cat_var]), main = names(cat_vars[cat_var]))
+}
+
+# Numerical variables (use stat.desc function of pastecs package to display summary)
+# Do not include the encounter_id or the patient_nbr
+num_vars <- readmission_data[, !a]
+num_vars <- subset(num_vars, select = -c(1,2))
+options(scipen=100)
+options(digits=3)
+stat.desc(num_vars)
+for (num_var in (1:ncol(num_vars))){
+  hist(num_vars[num_var])
+}
+
+
+```
+
+
+```{r}
+# Removal of Records
+# Remove if gender is "Unknown/Invalid"
+readmission_data <- readmission_data[!readmission_data$gender == "Unknown/Invalid",]
+
+# Remove if all three diagnoses are missing
+readmission_data <- readmission_data[!(readmission_data$diag_1 == "?" & readmission_data$diag_2 == '?' & readmission_data$diag_3 == '?'),]
+
+# Remove if patient died or discharged to hospice
+readmission_data <- readmission_data[!(readmission_data$discharge_disposition_id %in% c(11, 13, 14, 20, 21)),]
+
+# Retain only records for the first encounter for each patient to avoid biasing toward patients with multiple encounters
+readmission_data <- readmission_data[order(readmission_data$patient_nbr, readmission_data$encounter_id),]
+readmission_data <- readmission_data[!duplicated(readmission_data$patient_nbr),]
+
+# Remove "weight" attribute due to 98% missing values
+readmission_data <- subset(readmission_data, select = -c(weight))
+
+# Categorical Variables
+#Recategorize diagnoses ICD-9 codes to 9 disease categories including "Other" category for infrequent codes
+# ***
+# Attribute diag_1
+# ***
+readmission_data["copy_diag_1"] <- readmission_data$diag_1
+#convert ICD9 codes to numeric to facilitate searching
+# set non-numeric codes to zero
+levels(readmission_data$copy_diag_1)[levels(readmission_data$copy_diag_1) == "?"] <- '0'
+levels(readmission_data$copy_diag_1)[substr(levels(readmission_data$copy_diag_1), 1, 1) == "V"] <- '0'
+levels(readmission_data$copy_diag_1)[substr(levels(readmission_data$copy_diag_1), 1, 1) == "E"] <- '0'
+options(digits=5)
+readmission_data$copy_diag_1 <- as.numeric(as.character(readmission_data$copy_diag_1))
+#add levels for 9 disease categories
+levels(readmission_data$diag_1) <- c(levels(readmission_data$diag_1),"Circulatory", "Respiratory", "Digestive", "Diabetes", "Injury", "Musculoskeletal", "Genitourinary", "Neoplasms", "Other")
+
+readmission_data$diag_1 <- "Other"
+
+readmission_data$diag_1[((readmission_data$copy_diag_1 >= 390) & (readmission_data$copy_diag_1 <= 459)) | (readmission_data$copy_diag_1 == 785)] <- "Circulatory"
+
+readmission_data$diag_1[((readmission_data$copy_diag_1 >= 460) & (readmission_data$copy_diag_1 <= 519)) | (readmission_data$copy_diag_1 == 786)] <- 'Respiratory'
+
+readmission_data$diag_1[((readmission_data$copy_diag_1 >= 520) & (readmission_data$copy_diag_1 <= 579)) | (readmission_data$copy_diag_1 == 787)] <- 'Digestive'
+
+readmission_data$diag_1[((readmission_data$copy_diag_1 >= 250) & (readmission_data$copy_diag_1 < 251))] <- 'Diabetes'
+
+readmission_data$diag_1[((readmission_data$copy_diag_1 >= 800) & (readmission_data$copy_diag_1 <= 999))] <- 'Injury'
+
+readmission_data$diag_1[((readmission_data$copy_diag_1 >= 710) & (readmission_data$copy_diag_1 <= 739))] <- 'Musculoskeletal'
+
+readmission_data$diag_1[((readmission_data$copy_diag_1 >= 580) & (readmission_data$copy_diag_1 <= 629)) | (readmission_data$copy_diag_1 == 788)] <- 'Genitourinary'
+
+readmission_data$diag_1[((readmission_data$copy_diag_1 >= 140) & (readmission_data$copy_diag_1 <= 239))] <- 'Neoplasm'
+
+
+# ***
+# Attribute diag_2
+# ***
+readmission_data["copy_diag_2"] <- readmission_data$diag_2
+#convert ICD9 codes to numeric to facilitate searching
+# set non-numeric codes to zero
+levels(readmission_data$copy_diag_2)[levels(readmission_data$copy_diag_2) == "?"] <- '0'
+levels(readmission_data$copy_diag_2)[substr(levels(readmission_data$copy_diag_2), 1, 1) == "V"] <- '0'
+levels(readmission_data$copy_diag_2)[substr(levels(readmission_data$copy_diag_2), 1, 1) == "E"] <- '0'
+options(digits=5)
+readmission_data$copy_diag_2 <- as.numeric(as.character(readmission_data$copy_diag_2))
+#add levels for 9 disease categories
+levels(readmission_data$diag_2) <- c(levels(readmission_data$diag_2),"Circulatory", "Respiratory", "Digestive", "Diabetes", "Injury", "Musculoskeletal", "Genitourinary", "Neoplasms", "Other")
+
+readmission_data$diag_2 <- "Other"
+
+readmission_data$diag_2[((readmission_data$copy_diag_2 >= 390) & (readmission_data$copy_diag_2 <= 459)) | (readmission_data$copy_diag_2 == 785)] <- "Circulatory"
+
+readmission_data$diag_2[((readmission_data$copy_diag_2 >= 460) & (readmission_data$copy_diag_2 <= 519)) | (readmission_data$copy_diag_2 == 786)] <- 'Respiratory'
+
+readmission_data$diag_2[((readmission_data$copy_diag_2 >= 520) & (readmission_data$copy_diag_2 <= 579)) | (readmission_data$copy_diag_2 == 787)] <- 'Digestive'
+
+readmission_data$diag_2[((readmission_data$copy_diag_2 >= 250) & (readmission_data$copy_diag_2 < 251))] <- 'Diabetes'
+
+readmission_data$diag_2[((readmission_data$copy_diag_2 >= 800) & (readmission_data$copy_diag_2 <= 999))] <- 'Injury'
+
+readmission_data$diag_2[((readmission_data$copy_diag_2 >= 710) & (readmission_data$copy_diag_2 <= 739))] <- 'Musculoskeletal'
+
+readmission_data$diag_2[((readmission_data$copy_diag_2 >= 580) & (readmission_data$copy_diag_2 <= 629)) | (readmission_data$copy_diag_2 == 788)] <- 'Genitourinary'
+
+readmission_data$diag_2[((readmission_data$copy_diag_2 >= 140) & (readmission_data$copy_diag_2 <= 239))] <- 'Neoplasm'
+
+# ***
+# Attribute diag_3
+# ***
+readmission_data["copy_diag_3"] <- readmission_data$diag_3
+#convert ICD9 codes to numeric to facilitate searching
+# set non-numeric codes to zero
+levels(readmission_data$copy_diag_3)[levels(readmission_data$copy_diag_3) == "?"] <- '0'
+levels(readmission_data$copy_diag_3)[substr(levels(readmission_data$copy_diag_3), 1, 1) == "V"] <- '0'
+levels(readmission_data$copy_diag_3)[substr(levels(readmission_data$copy_diag_3), 1, 1) == "E"] <- '0'
+options(digits=5)
+readmission_data$copy_diag_3 <- as.numeric(as.character(readmission_data$copy_diag_3))
+#add levels for 9 disease categories
+levels(readmission_data$diag_3) <- c(levels(readmission_data$diag_3),"Circulatory", "Respiratory", "Digestive", "Diabetes", "Injury", "Musculoskeletal", "Genitourinary", "Neoplasms", "Other")
+
+readmission_data$diag_3 <- "Other"
+
+readmission_data$diag_3[((readmission_data$copy_diag_3 >= 390) & (readmission_data$copy_diag_3 <= 459)) | (readmission_data$copy_diag_3 == 785)] <- "Circulatory"
+
+readmission_data$diag_3[((readmission_data$copy_diag_3 >= 460) & (readmission_data$copy_diag_3 <= 519)) | (readmission_data$copy_diag_3 == 786)] <- 'Respiratory'
+
+readmission_data$diag_3[((readmission_data$copy_diag_3 >= 520) & (readmission_data$copy_diag_3 <= 579)) | (readmission_data$copy_diag_3 == 787)] <- 'Digestive'
+
+readmission_data$diag_3[((readmission_data$copy_diag_3 >= 250) & (readmission_data$copy_diag_3 < 251))] <- 'Diabetes'
+
+readmission_data$diag_3[((readmission_data$copy_diag_3 >= 800) & (readmission_data$copy_diag_3 <= 999))] <- 'Injury'
+
+readmission_data$diag_3[((readmission_data$copy_diag_3 >= 710) & (readmission_data$copy_diag_3 <= 739))] <- 'Musculoskeletal'
+
+readmission_data$diag_3[((readmission_data$copy_diag_3 >= 580) & (readmission_data$copy_diag_3 <= 629)) | (readmission_data$copy_diag_3 == 788)] <- 'Genitourinary'
+
+readmission_data$diag_3[((readmission_data$copy_diag_3 >= 140) & (readmission_data$copy_diag_3 <= 239))] <- 'Neoplasm'
+
+# drop temporary columns
+readmission_data <- subset(readmission_data, select = -c(copy_diag_1, copy_diag_2, copy_diag_3))
+
+# change diag attributes back into factors
+readmission_data$diag_1 <- as.factor(readmission_data$diag_1)
+readmission_data$diag_2 <- as.factor(readmission_data$diag_2)
+readmission_data$diag_3 <- as.factor(readmission_data$diag_3)
+
+# Rename values for unknown entries to 'Unknown' if applicable & create summaries for categorical variables
+
+# race
+levels(readmission_data$race)[levels(readmission_data$race) == "?"] <- 'Unknown'
+summary (readmission_data$race)
+
+# gender
+readmission_data$gender <- factor(readmission_data$gender)
+summary (readmission_data$gender)
+
+# age ... choose the midpoint of the age range given and convert to a numeric variables
+for (i in (0:9)) 
+   {
+    x <- paste("[", i*10, "-", (i+1)*10, ")", sep = "")
+    mid_x <- as.character(5 + 10*i)
+    levels(readmission_data$age)[levels(readmission_data$age) == x] <- mid_x
+   }
+readmission_data$age <- as.numeric(readmission_data$age)
+summary (readmission_data$age)
+
+# admission_type_id ... codes 5, 6, and 8 represent missing or unknown data
+readmission_data$admission_type_id <- as.factor(readmission_data$admission_type_id)
+levels(readmission_data$admission_type_id)[levels(readmission_data$admission_type_id) %in% c('5', '6', '8')] <- 'Unknown'
+summary (readmission_data$admission_type_id)
+
+# discharge_disposition_id ... codes 18, 25, and 26 represent missing or unknown data
+readmission_data$discharge_disposition_id <- as.factor(readmission_data$discharge_disposition_id)
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) %in% c('18', '25', '26')] <- 'Unknown'
+summary (readmission_data$discharge_disposition_id)
+
+# admission_source_id ... codes 9, 17, 20, and 21 represent missing or unknown data
+# codes 11, 12, 13, 14, 23, 24 refer to babies, childbirth, infants and will be releveled as "Babies"
+readmission_data$admission_source_id <- as.factor(readmission_data$admission_source_id)
+levels(readmission_data$admission_source_id)[levels(readmission_data$admission_source_id) %in% c('9', '17', '20', '21')] <- 'Unknown'
+levels(readmission_data$admission_source_id)[levels(readmission_data$admission_source_id) %in% c('11', '12', '13', '14', '23', '24')] <- 'Babies'
+summary (readmission_data$admission_source_id)
+
+# payer_code
+levels(readmission_data$payer_code)[levels(readmission_data$payer_code) == "?"] <- 'Unknown'
+summary (readmission_data$payer_code)
+
+# medical specialty ... combine specialties for which they are 500 or fewer encounters into "Uncommon"
+levels(readmission_data$medical_specialty)[levels(readmission_data$medical_specialty) == "?"] <- 'Unknown'
+uncommon_specialties <- names(which(table(readmission_data$medical_specialty) <= 500))
+levels(readmission_data$medical_specialty)[levels(readmission_data$medical_specialty) %in% uncommon_specialties] <- 'Uncommon'
+summary (readmission_data$medical_specialty)
+
+# drop all medication attributes (due to data sparseness) except insulin
+readmission_data <- subset(readmission_data, select = -c(24:40,42:46))
+
+```
+
+
+```{r}
+# Basic summary statistics revisited after initial data cleaning and attribute selection
+# Make a vector of categorical (factor) variables
+a<- (sapply(readmission_data,class) == "factor")
+
+# Categorical variables (use describe function of Hmisc package to display summary)
+cat_vars <- readmission_data[, a]
+Hmisc::describe(cat_vars)
+for (cat_var in (1:ncol(cat_vars))){
+  barplot(table(cat_vars[, cat_var]), main = names(cat_vars[cat_var]))
+}
+
+# Numerical variables (use stat.desc function of pastecs package to display summary)
+num_vars <- readmission_data[, !a]
+num_vars <- subset(num_vars, select = -c(1,2))
+options(scipen=100)
+options(digits=3)
+stat.desc(num_vars)
+for (num_var in (1:ncol(num_vars))){
+  hist(num_vars[num_var])
+}
+
+```
