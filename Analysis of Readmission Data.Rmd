@@ -11,14 +11,24 @@ output:
 #install.packages("Hmisc")
 #install.packages("summarytools")
 #install.packages("pastecs")
+#install.packages("corrplot")
+#install.packages("moments")
+#install.packages("rcompanion")
+#install.packages("dplyr")
 library("pastecs")
 library("summarytools")
 library("Hmisc")
+library("corrplot")
+library("moments")
+library("rcompanion")
+library("dplyr")
 
 ```
 
 ```{r}
-readmission_data <- read.csv("C:/Data/Education/Ryerson/CKME136/dataset_diabetes/diabetic_data.csv")
+readmission_data_original <- read.csv("C:/Data/Education/Ryerson/CKME136/dataset_diabetes/diabetic_data.csv")
+# using a working copy of the data set to preserve original data for reference
+readmission_data <-readmission_data_original
 ## view the first few rows of the data
 head(readmission_data)
 ```
@@ -37,7 +47,7 @@ a<- (sapply(readmission_data,class) == "factor")
 cat_vars <- readmission_data[, a]
 Hmisc::describe(cat_vars)
 for (cat_var in (1:ncol(cat_vars))){
-  barplot(table(cat_vars[, cat_var]), main = names(cat_vars[cat_var]))
+  barplot(table(cat_vars[, cat_var]), main = names(cat_vars[cat_var]), las=2)
 }
 
 # Numerical variables (use stat.desc function of pastecs package to display summary)
@@ -57,14 +67,17 @@ for (num_var in (1:ncol(num_vars))){
 
 ```{r}
 # Removal of Records
-# Remove if gender is "Unknown/Invalid"
+# Remove if gender is "Unknown/Invalid" since there are so few records (3) in this category
 readmission_data <- readmission_data[!readmission_data$gender == "Unknown/Invalid",]
+# Remove unused "Unknown/Invalid" level in gender factor attribute
+readmission_data$gender <- factor(readmission_data$gender)
 
-# Remove if all three diagnoses are missing
+
+# Remove if all three diagnoses are missing (at least one of these should be diabetes related)
 readmission_data <- readmission_data[!(readmission_data$diag_1 == "?" & readmission_data$diag_2 == '?' & readmission_data$diag_3 == '?'),]
 
-# Remove if patient died or discharged to hospice
-readmission_data <- readmission_data[!(readmission_data$discharge_disposition_id %in% c(11, 13, 14, 20, 21)),]
+# Remove if patient died or discharged to hospice since they can not be readmitted
+readmission_data <- readmission_data[!(readmission_data$discharge_disposition_id %in% c(11, 13, 14, 19, 20, 21)),]
 
 # Retain only records for the first encounter for each patient to avoid biasing toward patients with multiple encounters
 readmission_data <- readmission_data[order(readmission_data$patient_nbr, readmission_data$encounter_id),]
@@ -72,23 +85,32 @@ readmission_data <- readmission_data[!duplicated(readmission_data$patient_nbr),]
 
 # Remove "weight" attribute due to 98% missing values
 readmission_data <- subset(readmission_data, select = -c(weight))
+```
 
+```{r}
 # Categorical Variables
 #Recategorize diagnoses ICD-9 codes to 9 disease categories including "Other" category for infrequent codes
 # ***
 # Attribute diag_1
 # ***
+#create a working copy of diagnosis 1 attribute
 readmission_data["copy_diag_1"] <- readmission_data$diag_1
 #convert ICD9 codes to numeric to facilitate searching
-# set non-numeric codes to zero
+# set non-numeric codes to zero (these will ultimately be reclassified as "Other")
 levels(readmission_data$copy_diag_1)[levels(readmission_data$copy_diag_1) == "?"] <- '0'
 levels(readmission_data$copy_diag_1)[substr(levels(readmission_data$copy_diag_1), 1, 1) == "V"] <- '0'
 levels(readmission_data$copy_diag_1)[substr(levels(readmission_data$copy_diag_1), 1, 1) == "E"] <- '0'
+
+#diabetes codes begin with 250 but may have decimal code after 250, so include up to 5 digits
 options(digits=5)
+
+# change diagnosis date type from character to numeric
 readmission_data$copy_diag_1 <- as.numeric(as.character(readmission_data$copy_diag_1))
+
 #add levels for 9 disease categories
 levels(readmission_data$diag_1) <- c(levels(readmission_data$diag_1),"Circulatory", "Respiratory", "Digestive", "Diabetes", "Injury", "Musculoskeletal", "Genitourinary", "Neoplasms", "Other")
 
+#set all entries for first primary diagnosis to "Other" as the default and only reassign those entries that belong to one of the other eight diagnosis categories
 readmission_data$diag_1 <- "Other"
 
 readmission_data$diag_1[((readmission_data$copy_diag_1 >= 390) & (readmission_data$copy_diag_1 <= 459)) | (readmission_data$copy_diag_1 == 785)] <- "Circulatory"
@@ -111,17 +133,24 @@ readmission_data$diag_1[((readmission_data$copy_diag_1 >= 140) & (readmission_da
 # ***
 # Attribute diag_2
 # ***
+#create a working copy of diagnosis 2 attribute
 readmission_data["copy_diag_2"] <- readmission_data$diag_2
 #convert ICD9 codes to numeric to facilitate searching
-# set non-numeric codes to zero
+# set non-numeric codes to zero (these will ultimately be reclassified as "Other")
 levels(readmission_data$copy_diag_2)[levels(readmission_data$copy_diag_2) == "?"] <- '0'
 levels(readmission_data$copy_diag_2)[substr(levels(readmission_data$copy_diag_2), 1, 1) == "V"] <- '0'
 levels(readmission_data$copy_diag_2)[substr(levels(readmission_data$copy_diag_2), 1, 1) == "E"] <- '0'
+
+#diabetes codes begin with 250 but may have decimal code after 250, so include up to 5 digits
 options(digits=5)
+
+# change diagnosis date type from character to numeric
 readmission_data$copy_diag_2 <- as.numeric(as.character(readmission_data$copy_diag_2))
+
 #add levels for 9 disease categories
 levels(readmission_data$diag_2) <- c(levels(readmission_data$diag_2),"Circulatory", "Respiratory", "Digestive", "Diabetes", "Injury", "Musculoskeletal", "Genitourinary", "Neoplasms", "Other")
 
+#set all entries for second primary diagnosis to "Other" as the default and only reassign those entries that belong to one of the other eight diagnosis categories
 readmission_data$diag_2 <- "Other"
 
 readmission_data$diag_2[((readmission_data$copy_diag_2 >= 390) & (readmission_data$copy_diag_2 <= 459)) | (readmission_data$copy_diag_2 == 785)] <- "Circulatory"
@@ -143,17 +172,25 @@ readmission_data$diag_2[((readmission_data$copy_diag_2 >= 140) & (readmission_da
 # ***
 # Attribute diag_3
 # ***
+#create a working copy of diagnosis 3 attribute
 readmission_data["copy_diag_3"] <- readmission_data$diag_3
+
 #convert ICD9 codes to numeric to facilitate searching
-# set non-numeric codes to zero
+# set non-numeric codes to zero (these will ultimately be reclassified as "Other")
 levels(readmission_data$copy_diag_3)[levels(readmission_data$copy_diag_3) == "?"] <- '0'
 levels(readmission_data$copy_diag_3)[substr(levels(readmission_data$copy_diag_3), 1, 1) == "V"] <- '0'
 levels(readmission_data$copy_diag_3)[substr(levels(readmission_data$copy_diag_3), 1, 1) == "E"] <- '0'
+
+#diabetes codes begin with 250 but may have decimal code after 250, so include up to 5 digits
 options(digits=5)
+
+# change diagnosis date type from character to numeric
 readmission_data$copy_diag_3 <- as.numeric(as.character(readmission_data$copy_diag_3))
+
 #add levels for 9 disease categories
 levels(readmission_data$diag_3) <- c(levels(readmission_data$diag_3),"Circulatory", "Respiratory", "Digestive", "Diabetes", "Injury", "Musculoskeletal", "Genitourinary", "Neoplasms", "Other")
 
+#set all entries for third primary diagnosis to "Other" as the default and only reassign those entries that belong to one of the other eight diagnosis categories
 readmission_data$diag_3 <- "Other"
 
 readmission_data$diag_3[((readmission_data$copy_diag_3 >= 390) & (readmission_data$copy_diag_3 <= 459)) | (readmission_data$copy_diag_3 == 785)] <- "Circulatory"
@@ -172,7 +209,7 @@ readmission_data$diag_3[((readmission_data$copy_diag_3 >= 580) & (readmission_da
 
 readmission_data$diag_3[((readmission_data$copy_diag_3 >= 140) & (readmission_data$copy_diag_3 <= 239))] <- 'Neoplasm'
 
-# drop temporary columns
+# drop temporary columns for diagnoses
 readmission_data <- subset(readmission_data, select = -c(copy_diag_1, copy_diag_2, copy_diag_3))
 
 # change diag attributes back into factors
@@ -182,12 +219,11 @@ readmission_data$diag_3 <- as.factor(readmission_data$diag_3)
 
 # Rename values for unknown entries to 'Unknown' if applicable & create summaries for categorical variables
 
-# race
-levels(readmission_data$race)[levels(readmission_data$race) == "?"] <- 'Unknown'
+# race ... not well balanced (e.g. code Asian represents less than 1% of data) create levels: Caucasian and NotCaucasian
+levels(readmission_data$race)[!(levels(readmission_data$race) == "Caucasian")] <- 'NotCaucasian'
 summary (readmission_data$race)
 
 # gender
-readmission_data$gender <- factor(readmission_data$gender)
 summary (readmission_data$gender)
 
 # age ... choose the midpoint of the age range given and convert to a numeric variables
@@ -197,38 +233,109 @@ for (i in (0:9))
     mid_x <- as.character(5 + 10*i)
     levels(readmission_data$age)[levels(readmission_data$age) == x] <- mid_x
    }
-readmission_data$age <- as.numeric(readmission_data$age)
+readmission_data$age <- as.numeric(levels(readmission_data$age))[readmission_data$age]
 summary (readmission_data$age)
 
-# admission_type_id ... codes 5, 6, and 8 represent missing or unknown data
+# admission_type_id ... unbalanced data, so retain codes for 1 (Emergency), 2 (Urgent), and 3 (Elective) and relabel the rest as Uncommon (note: codes 5, 6, and 8 represent missing or unknown data)
 readmission_data$admission_type_id <- as.factor(readmission_data$admission_type_id)
-levels(readmission_data$admission_type_id)[levels(readmission_data$admission_type_id) %in% c('5', '6', '8')] <- 'Unknown'
+levels(readmission_data$admission_type_id)[levels(readmission_data$admission_type_id) %in% c('4', '5', '6', '7', '8')] <- 'Uncommon'
+levels(readmission_data$admission_type_id)[levels(readmission_data$admission_type_id) == '1'] <- 'Emergency'
+levels(readmission_data$admission_type_id)[levels(readmission_data$admission_type_id) == '2'] <- 'Urgent'
+levels(readmission_data$admission_type_id)[levels(readmission_data$admission_type_id) == '3'] <- 'Elective'
 summary (readmission_data$admission_type_id)
 
-# discharge_disposition_id ... codes 18, 25, and 26 represent missing or unknown data
+# discharge disposition id ... many levels and unbalanced ... combine all levels that represent less than 2% of the observations into an "Uncommon" category
 readmission_data$discharge_disposition_id <- as.factor(readmission_data$discharge_disposition_id)
+# discharge_disposition_id ... codes 18, 25, and 26 represent missing or unknown data
 levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) %in% c('18', '25', '26')] <- 'Unknown'
+# discharge_disposition_id ... codes 12, 16, and 17 represent outpatient transfer / discharge /admission 
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) %in% c('12', '16', '17')] <- 'Outpatient'
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) == '1'] <- 'Home'
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) == '2'] <- 'Short term hospital'
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) == '3'] <- 'SNF'
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) == '4'] <- 'ICF'
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) == '5'] <- 'Inpatient care institution'
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) == '6'] <- 'Home health service'
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) == '7'] <- 'Left AMA'
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) == '8'] <- 'Home IV provider'
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) == '9'] <- 'Inpatient to this hospital'
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) == '10'] <- 'Neonatal aftercare'
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) == '15'] <- 'Medicare swing bed'
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) == '22'] <- 'Rehab'
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) == '23'] <- 'Long term care'
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) == '24'] <- 'Nursing facility'
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) == '27'] <- 'Federal HCF'
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) == '28'] <- 'Psychiatric hospital'
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) == '29'] <- 'Critical Access Hospital'
+levels(readmission_data$discharge_disposition_id)[levels(readmission_data$discharge_disposition_id) == '30'] <- 'Another HCI'
+# reassign any levels with less than 2% of the data to "Uncommon"
+# calculate the proportions for each level
+props <- table(readmission_data$discharge_disposition_id) / length (readmission_data$discharge_disposition_id)
+levels(readmission_data$discharge_disposition_id)[props < 0.02] <- 'Uncommon'
+# remove any unused levels
+readmission_data$discharge_disposition_id <- factor(readmission_data$discharge_disposition_id)
 summary (readmission_data$discharge_disposition_id)
 
-# admission_source_id ... codes 9, 17, 20, and 21 represent missing or unknown data
-# codes 11, 12, 13, 14, 23, 24 refer to babies, childbirth, infants and will be releveled as "Babies"
+# admission source id ... many levels and unbalanced ... combine all levels that represent less than 2% of the observations into an "Uncommon" category
 readmission_data$admission_source_id <- as.factor(readmission_data$admission_source_id)
-levels(readmission_data$admission_source_id)[levels(readmission_data$admission_source_id) %in% c('9', '17', '20', '21')] <- 'Unknown'
+# admission_source_id ... codes 9, 15, 17, 20, and 21 represent missing or unknown data
+levels(readmission_data$admission_source_id)[levels(readmission_data$admission_source_id) %in% c('9', '15', '17', '20', '21')] <- 'Unknown'
+
+# codes 11, 12, 13, 14, 23, 24 refer to babies, childbirth, infants and will be releveled as "Babies"
 levels(readmission_data$admission_source_id)[levels(readmission_data$admission_source_id) %in% c('11', '12', '13', '14', '23', '24')] <- 'Babies'
+
+# codes 4, 26 both mean transfer from hospital ... relevel as "Transfer from hospital"
+levels(readmission_data$admission_source_id)[levels(readmission_data$admission_source_id) %in% c('4', '26')] <- 'Transfer from hospital'
+
+levels(readmission_data$admission_source_id)[levels(readmission_data$admission_source_id) == '1'] <- 'Physician Referral'
+levels(readmission_data$admission_source_id)[levels(readmission_data$admission_source_id) == '2'] <- 'Clinic Referral'
+levels(readmission_data$admission_source_id)[levels(readmission_data$admission_source_id) == '3'] <- 'HMO Referral'
+levels(readmission_data$admission_source_id)[levels(readmission_data$admission_source_id) == '5'] <- 'Transfer from SNF'
+levels(readmission_data$admission_source_id)[levels(readmission_data$admission_source_id) == '6'] <- 'Transfer from HCF'
+levels(readmission_data$admission_source_id)[levels(readmission_data$admission_source_id) == '7'] <- 'ER'
+levels(readmission_data$admission_source_id)[levels(readmission_data$admission_source_id) == '8'] <- 'Court'
+levels(readmission_data$admission_source_id)[levels(readmission_data$admission_source_id) == '10'] <- 'Transfer from CAH'
+levels(readmission_data$admission_source_id)[levels(readmission_data$admission_source_id) == '18'] <- 'Transfer From HHA'
+levels(readmission_data$admission_source_id)[levels(readmission_data$admission_source_id) == '19'] <- 'Readmission to HHA'
+levels(readmission_data$admission_source_id)[levels(readmission_data$admission_source_id) == '22'] <- 'Transfer from inpatients'
+levels(readmission_data$admission_source_id)[levels(readmission_data$admission_source_id) == '25'] <- 'Transfer from ASC'
+# reassign any levels with less than 2% of the data to "Uncommon"
+# calculate the proportions for each level
+props <- table(readmission_data$admission_source_id) / length (readmission_data$admission_source_id)
+levels(readmission_data$admission_source_id)[props < 0.25] <- 'Uncommon'
+# remove unused factors
+readmission_data$admission_source_id <- factor(readmission_data$admission_source_id)
 summary (readmission_data$admission_source_id)
 
-# payer_code
+# payer_code ... many levels and not well balanced (e.g. code FR only has 1 observation)
+# create three levels: Unkown, MC (Medicaid), and Uncommon
 levels(readmission_data$payer_code)[levels(readmission_data$payer_code) == "?"] <- 'Unknown'
+levels(readmission_data$payer_code)[!(levels(readmission_data$payer_code) == "Unknown") & !(levels(readmission_data$payer_code) == "MC")] <- 'Uncommon'
 summary (readmission_data$payer_code)
 
-# medical specialty ... combine specialties for which they are 500 or fewer encounters into "Uncommon"
+# medical specialty ... reassign any levels with less than 5% of the data to "Uncommon"
+# calculate the proportions for each level
 levels(readmission_data$medical_specialty)[levels(readmission_data$medical_specialty) == "?"] <- 'Unknown'
-uncommon_specialties <- names(which(table(readmission_data$medical_specialty) <= 500))
-levels(readmission_data$medical_specialty)[levels(readmission_data$medical_specialty) %in% uncommon_specialties] <- 'Uncommon'
+props <- table(readmission_data$medical_specialty) / length (readmission_data$medical_specialty)
+levels(readmission_data$medical_specialty)[props < 0.05] <- 'Uncommon'
 summary (readmission_data$medical_specialty)
 
 # drop all medication attributes (due to data sparseness) except insulin
 readmission_data <- subset(readmission_data, select = -c(24:40,42:46))
+
+#convert num_procedures, number_outpatient, number_emergency, and number_inpatient to categorical variables with values "None" and "At least one" since most are zeroes ... not normal
+convert_function <- function(x){
+   x[x > 0] <- 1
+   x <- as.factor(x)
+   levels(x)[levels(x)=="0"] <- "None"
+   levels(x)[levels(x)=="1"] <- "At least one"
+   return(x)
+}
+
+readmission_data$num_procedures <- convert_function(readmission_data$num_procedures)
+readmission_data$number_outpatient <- convert_function(readmission_data$number_outpatient)
+readmission_data$number_emergency <- convert_function(readmission_data$number_emergency)
+readmission_data$number_inpatient <- convert_function(readmission_data$number_inpatient)
 
 ```
 
@@ -242,17 +349,230 @@ a<- (sapply(readmission_data,class) == "factor")
 cat_vars <- readmission_data[, a]
 Hmisc::describe(cat_vars)
 for (cat_var in (1:ncol(cat_vars))){
-  barplot(table(cat_vars[, cat_var]), main = names(cat_vars[cat_var]))
+  barplot(table(cat_vars[, cat_var]), main = names(cat_vars[cat_var]), las=2)
 }
 
 # Numerical variables (use stat.desc function of pastecs package to display summary)
+# Do not include the encounter_id or the patient_nbr
 num_vars <- readmission_data[, !a]
 num_vars <- subset(num_vars, select = -c(1,2))
 options(scipen=100)
-options(digits=3)
+options(digits=1)
 stat.desc(num_vars)
+summary(num_vars)
 for (num_var in (1:ncol(num_vars))){
   hist(num_vars[num_var])
 }
 
+# Check skew and kurtosis for age, time_in_hospital, num_lab_procedures, and num_medications to determine normality
+kurt <- kurtosis(num_vars$age)
+skew <- skewness(num_vars$age)
+print (paste("The distribution of the age attribute has skewness ", format(skew, digits = 2), " and kurtosis ", format(kurt, digits = 2, trim = FALSE, justify = "right"), "." , sep = ""))
+
+kurt <- kurtosis(num_vars$time_in_hospital)
+skew <- skewness(num_vars$time_in_hospital)
+print (paste("The distribution of the time_in_hospital attribute has skewness ", format(skew, digits = 2), " and kurtosis ", format(kurt, digits = 2), "." , sep = ""))
+
+kurt <- kurtosis(num_vars$num_lab_procedures)
+skew <- skewness(num_vars$num_lab_procedures)
+print (paste("The distribution of the num_lab_procedures attribute has skewness ", format(skew, digits = 2), " and kurtosis ", format(kurt, digits = 2), "." , sep = ""))
+
+kurt <- kurtosis(num_vars$num_medications)
+skew <- skewness(num_vars$num_medications)
+print (paste("The distribution of the num_medications attribute has skewness ", format(skew, digits = 2), " and kurtosis ", format(kurt, digits = 2), "." , sep = ""))
+```
+
+```{r}
+# Attempt to transform number of diagnoses attribute for normality
+# Since dataset is too large to run Tukey's Ladder of Powers, choose a random sample from the dataset, perform the Tukey transformation and then apply the result to the entire dataset.
+num_var_sample <- sample_n (num_vars, 5000)
+tuk <- transformTukey(num_var_sample$number_diagnoses)
+tuk2 <- transformTukey(tuk)
+
+# strong evidence of non-normality even after Tukey transformation ... using binning instead (convert to categorical)
+readmission_data$number_diagnoses[readmission_data$number_diagnoses <= 8] <- 0
+readmission_data$number_diagnoses[readmission_data$number_diagnoses >= 9] <- 1
+readmission_data$number_diagnoses <- as.factor(readmission_data$number_diagnoses)
+levels(readmission_data$number_diagnoses)[levels(readmission_data$number_diagnoses)=="0"] <- "Low"
+levels(readmission_data$number_diagnoses)[levels(readmission_data$number_diagnoses)=="1"] <- "High"
+
+#include number_diagnoses in dataframe for categorical variables and remove from numerical variables dataframe
+a<- (sapply(readmission_data,class) == "factor")
+cat_vars <- readmission_data[, a]
+num_vars <- readmission_data[, !a]
+num_vars <- subset(num_vars, select = -c(1,2))
+Hmisc::describe(cat_vars[15])
+barplot(table(cat_vars[15]), main = names(cat_vars[15]), las=2)
+
+```
+
+```{r}
+# Treatment of Outliers
+# Boxplots of numerical attributes
+
+num_obs <- nrow(num_vars)  # total number of records
+
+# loop through all numeric variables to create a boxplot for each one
+for (num_var in (1:ncol(num_vars))) {
+  current_num_var <- num_vars[[num_var]]
+  num_outliers <- length(boxplot.stats(current_num_var)$out)
+  percent_outliers <- format(round(100 * num_outliers / num_obs, 2), nsmall = 2)
+  boxplot(current_num_var, axes = FALSE, main=names(num_vars)[num_var], boxwex=0.2, xlab = paste("Number of outliers = ", num_outliers, " (", percent_outliers, "%)"))
+  text(y = boxplot.stats(current_num_var)$stats, labels = boxplot.stats(current_num_var)$stats, x = 1.25)
+  }
+
+```
+
+```{r}
+# Univariate, bivariate, and multivariate analysis of the data including testing for normality, visualizations, correlation analysis, and ANOVA.
+
+# Check correlation between pairs of numeric attributes (use Spearman due to non-normality in some of attributes)
+num_cor <- cor(num_vars, method = "spearman")
+corrplot(num_cor, method="number", type="upper")
+# no significant correlation between pairs of numeric attributes
+
+# loop through pairs of categorical variables checking chi-square test for correlation significance (use 0.01 significance level)
+num_cat_vars <- ncol(cat_vars)
+for (i in 1:(num_cat_vars - 1)){
+  for (j in (i + 1) : num_cat_vars) {
+    cat_table <- table(cat_vars[[i]], cat_vars[[j]])
+    chi2 <- chisq.test(cat_table)
+    if (chi2$p.value <= 0.01) {
+      print (paste(names(cat_vars[i]), " and ", names(cat_vars[j]), " are not independent. ", format(chi2$p.value, digits = 4)))
+    }
+  } 
+}
+# all pairs of categorical variables are highly correlated
+
+# ANOVA to check independence of categorical and numerical attributes
+num_cat_vars <- ncol(cat_vars)
+num_num_vars <- ncol(num_vars)
+for (i in 1:(num_num_vars)){
+  for (j in (1 : num_cat_vars)) {
+    aov_result <- aov(num_vars[[i]] ~ cat_vars[[j]])
+    aov_sum <- unlist(summary(aov_result))
+    if (aov_sum["Pr(>F)1"] <= 0.05) {
+       print (paste(names(num_vars[i]), " and ", names(cat_vars[j]), " are not independent. ", aov_sum["Pr(>F)1"]))
+    }
+  } 
+}
+# none of the numerical attributes are independent from any of the categorical variables
+
+```
+
+
+
+```{r}
+# Normalize data. Subset data, Decision rules.
+```
+
+```{r}
+# Use the Apriori algorithm to examine association rules to induce new knowledge about the relationships among the hospital data attributes with respect to the class variable "readmitted".
+# need to detach package dplyr before using plyr
+#if(sessionInfo()['basePkgs']=="dplyr" | sessionInfo()['otherPkgs']=="dplyr"){
+  detach(package:dplyr, unload=TRUE)
+#}
+#install.packages("dplyr")
+library(plyr)
+
+# Discretize continuous variables using interval = square root of the range and convert to factors
+num_vars_disc <- num_vars
+discretize <- function (df_column) {
+
+  interval <- round (sqrt (max(df_column) - min(df_column)))
+  df_column <- cut_interval(df_column, n = interval)
+  
+  return (df_column)
+}
+
+for (i in 1:ncol(num_vars)) {
+  num_vars_disc[,i] <- as.factor(discretize (num_vars[,i]))
+}
+
+# create dataframe with only categorical data for entire readmission dataset
+readmission_all_cat <- cbind(num_vars_disc, cat_vars)
+
+# use association rules (apriori algorithm) to induce knowledge about relationships between independent variables and class variable
+library(arules)
+#convert dataframe to transactions
+readmission_trans <- as(readmission_all_cat, "transactions")
+summary(readmission_trans)
+itemLabels(readmission_trans)
+# use lower support and confidence for readmitted<=30 because very few rules generated
+rules_under30 <- apriori(readmission_trans, parameter = list(supp = 0.001, conf = 0.5, target = "rules"), appearance = list(rhs = "readmitted=<30"))
+# use slightly higher support for readmitted>=30 to generate a reasonable number of rules
+rules_over30 <- apriori(readmission_trans, parameter = list(supp = 0.015, conf = 0.5, target = "rules"), appearance = list(rhs = "readmitted=>30"))
+# use higher confidence for readmitted=NO to generate a reasonable number of rules
+rules_NOT <- apriori(readmission_trans, parameter = list(supp = 0.004, conf = 0.85, target = "rules"), appearance = list(rhs = "readmitted=NO"))
+
+inspect(head(rules_under30, by = "lift")) # view rules for patients readmitted in under 30 days
+inspect(head(rules_over30, by = "lift")) # view rules for patients readmitted in over 30 days
+inspect(head(rules_NOT, by = "lift")) # view rules for patients not readmitted
+
+# combine readmitted<=30 and readmitted>=30 to determine association rules for simply readmitted or not
+readmission_binary_class <- readmission_all_cat
+levels(readmission_binary_class$readmitted)[levels(readmission_binary_class$readmitted) == "<30"] <- "YES"
+levels(readmission_binary_class$readmitted)[levels(readmission_binary_class$readmitted) == ">30"] <- "YES"
+readmission_trans_binary <- as(readmission_binary_class, "transactions")
+summary(readmission_trans_binary)
+itemLabels(readmission_trans_binary)
+# use lower support and confidence for readmitted<=30 because very few rules generated
+rules__binary_YES <- apriori(readmission_trans_binary, parameter = list(supp = 0.04, conf = 0.6, target = "rules"), appearance = list(rhs = "readmitted=YES"))
+# use higher confidence for readmitted=NO to generate a reasonable number of rules
+rules_binary_NO <- apriori(readmission_trans_binary, parameter = list(supp = 0.004, conf = 0.85, target = "rules"), appearance = list(rhs = "readmitted=NO"))
+
+inspect(head(rules_under30, by = "lift")) # view rules for patients readmitted in under 30 days
+inspect(head(rules_over30, by = "lift")) # view rules for patients readmitted in over 30 days
+inspect(head(rules_NOT, by = "lift")) # view rules for patients not readmitted
+
+
+#library(reshape2)
+
+# Convert to a wide format with `dcast()` ... create new columns for each levels of categorical variable and populate with zeroes and ones to indicate if it applies to the particular observation
+#long_reshaped <- function (df, col_num) {
+#     dcast(df, 
+#           encounter_id + readmitted + . - df[[col_num]] ~ df[[col_num]], # retain all columns #except current one being processed
+#           fun.aggregate = length
+#           )
+#  return(df)
+#}
+
+#readmission_long <- readmission_all_cat
+#x <- long_reshaped(readmission_long, 2)
+
+# loop through all columns except encounter_id and readmitted class variable to create "market basket" of attributes for each encounter_id
+#for (i in (2:(ncol(readmission_all_cat)-1))) {  # use all columns except encounter_id and #readmitted
+#  df long_shaped()
+#}
+#long_reshaped
+
+```
+
+```{r}
+# Use R package FSelector to identify and remove attributes that are not significantly contributing as predictors of the target variable "readmitted".
+```
+
+```{r}
+#Split the data into training (80%) and test set (20%). Consider possibly treatment for imbalance in the target variable, readmitted.
+```
+
+```{r}
+# Apply various classification techniques (Naïve Bayes, decision tree, random forest, and support vector machines) to the data. 
+
+# Compare the efficiency of the various techniques by looking at the run time. 
+
+#Determine the most effective model using performance measures
+# Use F1 score
+# Use accuracy
+
+#	Experiment with various numbers of folds in cross-validation to find the optimal number for the training set (graph performance measures against number of cross-validation folds to determine where number of folds stabilizes)
+```
+```{r}
+# Generalize the results of the classification using bagging and stacking ensemble techniques.
+# Apply the final generalized model to the test data set.
+
+```
+
+```{r}
+# Interpret the results of the association rules and the classification algorithms in terms of hospital readmission. Identify attributes that contribute to hospital readmission for diabetic patients. Compare the results with other analyses of these data.
 ```
