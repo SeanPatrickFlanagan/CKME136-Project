@@ -15,14 +15,32 @@ output:
 #install.packages("moments")
 #install.packages("rcompanion")
 #install.packages("dplyr")
+#install.packages("e1071")
+#install.packages("Rfast")
+#install.packages("FSelector")
+#install.packages("mlbench")
+#install.packages("dplyr")
+#install.packages("tictoc")
+#install.packages("DMwR")
+
 library("pastecs")
 library("summarytools")
 library("Hmisc")
 library("corrplot")
 library("moments")
 library("rcompanion")
+library("plyr")
 library("dplyr")
-
+library("FSelector")
+library("mlbench")
+library("caret")
+library("Rfast")
+library("arules")
+library("e1071")
+library("RWeka")
+library("randomForest")
+library("tictoc")
+library("DMwR")
 ```
 
 ```{r}
@@ -32,7 +50,6 @@ readmission_data <-readmission_data_original
 ## view the first few rows of the data
 head(readmission_data)
 ```
-
 ```{r}
 data_desc <- read.csv("C:/Data/Education/Ryerson/CKME136/dataset_diabetes/IDs_mapping.csv")
 # view the first few rows of the data description
@@ -41,7 +58,7 @@ data_desc
 ```{r}
 # Basic summary statistics
 # Make a vector of categorical (factor) variables
-a<- (sapply(readmission_data,class) == "factor")
+a <- (sapply(readmission_data,class) == "factor")
 
 # Categorical variables (use describe function of Hmisc package to display summary)
 cat_vars <- readmission_data[, a]
@@ -51,8 +68,8 @@ for (cat_var in (1:ncol(cat_vars))){
 }
 
 # Numerical variables (use stat.desc function of pastecs package to display summary)
-# Do not include the encounter_id or the patient_nbr
 num_vars <- readmission_data[, !a]
+# Do not include the encounter_id or the patient_nbr
 num_vars <- subset(num_vars, select = -c(1,2))
 options(scipen=100)
 options(digits=3)
@@ -60,7 +77,6 @@ stat.desc(num_vars)
 for (num_var in (1:ncol(num_vars))){
   hist(num_vars[num_var])
 }
-
 
 ```
 
@@ -71,7 +87,6 @@ for (num_var in (1:ncol(num_vars))){
 readmission_data <- readmission_data[!readmission_data$gender == "Unknown/Invalid",]
 # Remove unused "Unknown/Invalid" level in gender factor attribute
 readmission_data$gender <- factor(readmission_data$gender)
-
 
 # Remove if all three diagnoses are missing (at least one of these should be diabetes related)
 readmission_data <- readmission_data[!(readmission_data$diag_1 == "?" & readmission_data$diag_2 == '?' & readmission_data$diag_3 == '?'),]
@@ -104,7 +119,7 @@ levels(readmission_data$copy_diag_1)[substr(levels(readmission_data$copy_diag_1)
 #diabetes codes begin with 250 but may have decimal code after 250, so include up to 5 digits
 options(digits=5)
 
-# change diagnosis date type from character to numeric
+# change diagnosis date type from factor to numeric (convert to character first, otherwise get levels of factor not the actual values)
 readmission_data$copy_diag_1 <- as.numeric(as.character(readmission_data$copy_diag_1))
 
 #add levels for 9 disease categories
@@ -223,19 +238,6 @@ readmission_data$diag_3 <- as.factor(readmission_data$diag_3)
 levels(readmission_data$race)[!(levels(readmission_data$race) == "Caucasian")] <- 'NotCaucasian'
 summary (readmission_data$race)
 
-# gender
-summary (readmission_data$gender)
-
-# age ... choose the midpoint of the age range given and convert to a numeric variables
-for (i in (0:9)) 
-   {
-    x <- paste("[", i*10, "-", (i+1)*10, ")", sep = "")
-    mid_x <- as.character(5 + 10*i)
-    levels(readmission_data$age)[levels(readmission_data$age) == x] <- mid_x
-   }
-readmission_data$age <- as.numeric(levels(readmission_data$age))[readmission_data$age]
-summary (readmission_data$age)
-
 # admission_type_id ... unbalanced data, so retain codes for 1 (Emergency), 2 (Urgent), and 3 (Elective) and relabel the rest as Uncommon (note: codes 5, 6, and 8 represent missing or unknown data)
 readmission_data$admission_type_id <- as.factor(readmission_data$admission_type_id)
 levels(readmission_data$admission_type_id)[levels(readmission_data$admission_type_id) %in% c('4', '5', '6', '7', '8')] <- 'Uncommon'
@@ -323,6 +325,19 @@ summary (readmission_data$medical_specialty)
 # drop all medication attributes (due to data sparseness) except insulin
 readmission_data <- subset(readmission_data, select = -c(24:40,42:46))
 
+# gender
+summary (readmission_data$gender)
+
+# age ... choose the midpoint of the age range given and convert to a numeric variables
+for (i in (0:9)) 
+   {
+    x <- paste("[", i*10, "-", (i+1)*10, ")", sep = "")
+    mid_x <- as.character(5 + 10*i)
+    levels(readmission_data$age)[levels(readmission_data$age) == x] <- mid_x
+   }
+readmission_data$age <- as.numeric(levels(readmission_data$age))[readmission_data$age]
+summary (readmission_data$age)
+
 #convert num_procedures, number_outpatient, number_emergency, and number_inpatient to categorical variables with values "None" and "At least one" since most are zeroes ... not normal
 convert_function <- function(x){
    x[x > 0] <- 1
@@ -339,7 +354,6 @@ readmission_data$number_inpatient <- convert_function(readmission_data$number_in
 
 ```
 
-
 ```{r}
 # Basic summary statistics revisited after initial data cleaning and attribute selection
 # Make a vector of categorical (factor) variables
@@ -353,8 +367,8 @@ for (cat_var in (1:ncol(cat_vars))){
 }
 
 # Numerical variables (use stat.desc function of pastecs package to display summary)
-# Do not include the encounter_id or the patient_nbr
 num_vars <- readmission_data[, !a]
+# Do not include the encounter_id or the patient_nbr
 num_vars <- subset(num_vars, select = -c(1,2))
 options(scipen=100)
 options(digits=1)
@@ -424,58 +438,43 @@ for (num_var in (1:ncol(num_vars))) {
 ```
 
 ```{r}
-# Univariate, bivariate, and multivariate analysis of the data including testing for normality, visualizations, correlation analysis, and ANOVA.
-
+#
 # Check correlation between pairs of numeric attributes (use Spearman due to non-normality in some of attributes)
 num_cor <- cor(num_vars, method = "spearman")
 corrplot(num_cor, method="number", type="upper")
 # no significant correlation between pairs of numeric attributes
 
-# loop through pairs of categorical variables checking chi-square test for correlation significance (use 0.01 significance level)
+# loop through pairs of categorical variables checking G-test for correlation significance (use 0.01 significance level)
 num_cat_vars <- ncol(cat_vars)
+num_num_vars <- ncol(num_vars)
+
 for (i in 1:(num_cat_vars - 1)){
   for (j in (i + 1) : num_cat_vars) {
-    cat_table <- table(cat_vars[[i]], cat_vars[[j]])
-    chi2 <- chisq.test(cat_table)
-    if (chi2$p.value <= 0.01) {
-      print (paste(names(cat_vars[i]), " and ", names(cat_vars[j]), " are not independent. ", format(chi2$p.value, digits = 4)))
+    gtest <- gchi2Test(cat_vars[,i], cat_vars[,j])
+    if (gtest[2,2] <= 0.05) {
+      print (paste(names(cat_vars[i]), " and ", names(cat_vars[j]), " are not independent.", format(gtest[2,2], digits = 4)))
+    } else {
+      print (paste(names(cat_vars[i]), " and ", names(cat_vars[j]), " are independent.", format(gtest[2,2], digits = 4)))
     }
   } 
 }
-# all pairs of categorical variables are highly correlated
 
 # ANOVA to check independence of categorical and numerical attributes
-num_cat_vars <- ncol(cat_vars)
-num_num_vars <- ncol(num_vars)
-for (i in 1:(num_num_vars)){
+for (i in (1 : num_num_vars)) {
   for (j in (1 : num_cat_vars)) {
     aov_result <- aov(num_vars[[i]] ~ cat_vars[[j]])
     aov_sum <- unlist(summary(aov_result))
     if (aov_sum["Pr(>F)1"] <= 0.05) {
-       print (paste(names(num_vars[i]), " and ", names(cat_vars[j]), " are not independent. ", aov_sum["Pr(>F)1"]))
+      print (paste(names(num_vars[i]), " and ", names(cat_vars[j]), " are not independent. ", aov_sum["Pr(>F)1"]))
+    } else {
+      print (paste(names(num_vars[i]), " and ", names(cat_vars[j]), " are independent. ", aov_sum["Pr(>F)1"]))
     }
-  } 
+  }
 }
-# none of the numerical attributes are independent from any of the categorical variables
-
-```
-
-
-
-```{r}
-# Normalize data. Subset data, Decision rules.
 ```
 
 ```{r}
-# Use the Apriori algorithm to examine association rules to induce new knowledge about the relationships among the hospital data attributes with respect to the class variable "readmitted".
-# need to detach package dplyr before using plyr
-#if(sessionInfo()['basePkgs']=="dplyr" | sessionInfo()['otherPkgs']=="dplyr"){
-  detach(package:dplyr, unload=TRUE)
-#}
-#install.packages("dplyr")
-library(plyr)
-
-# Discretize continuous variables using interval = square root of the range and convert to factors
+# Create a categorical only dataset. Discretize continuous variables using interval = square root of the range and convert to factors
 num_vars_disc <- num_vars
 discretize <- function (df_column) {
 
@@ -491,9 +490,11 @@ for (i in 1:ncol(num_vars)) {
 
 # create dataframe with only categorical data for entire readmission dataset
 readmission_all_cat <- cbind(num_vars_disc, cat_vars)
+```
 
+```{r}
 # use association rules (apriori algorithm) to induce knowledge about relationships between independent variables and class variable
-library(arules)
+
 #convert dataframe to transactions
 readmission_trans <- as(readmission_all_cat, "transactions")
 summary(readmission_trans)
@@ -503,76 +504,366 @@ rules_under30 <- apriori(readmission_trans, parameter = list(supp = 0.001, conf 
 # use slightly higher support for readmitted>=30 to generate a reasonable number of rules
 rules_over30 <- apriori(readmission_trans, parameter = list(supp = 0.015, conf = 0.5, target = "rules"), appearance = list(rhs = "readmitted=>30"))
 # use higher confidence for readmitted=NO to generate a reasonable number of rules
-rules_NOT <- apriori(readmission_trans, parameter = list(supp = 0.004, conf = 0.85, target = "rules"), appearance = list(rhs = "readmitted=NO"))
+rules_NOT <- apriori(readmission_trans, parameter = list(supp = 0.002, conf = 0.89, target = "rules"), appearance = list(rhs = "readmitted=NO"))
 
 inspect(head(rules_under30, by = "lift")) # view rules for patients readmitted in under 30 days
 inspect(head(rules_over30, by = "lift")) # view rules for patients readmitted in over 30 days
 inspect(head(rules_NOT, by = "lift")) # view rules for patients not readmitted
+```
 
-# combine readmitted<=30 and readmitted>=30 to determine association rules for simply readmitted or not
+```{r}
+# combine readmitted<=30 and readmitted>=30 to create a binary class dataset
 readmission_binary_class <- readmission_all_cat
-levels(readmission_binary_class$readmitted)[levels(readmission_binary_class$readmitted) == "<30"] <- "YES"
-levels(readmission_binary_class$readmitted)[levels(readmission_binary_class$readmitted) == ">30"] <- "YES"
+readmission_binary_class$readmitted <- factor(ifelse(readmission_binary_class$readmitted == "NO","NO","YES"))
+```
+
+```{r}
+# Using the binary class dataset, determine association rules for simply readmitted or not
 readmission_trans_binary <- as(readmission_binary_class, "transactions")
 summary(readmission_trans_binary)
 itemLabels(readmission_trans_binary)
-# use lower support and confidence for readmitted<=30 because very few rules generated
+# generate rules for "readmitted=YES"
 rules__binary_YES <- apriori(readmission_trans_binary, parameter = list(supp = 0.04, conf = 0.6, target = "rules"), appearance = list(rhs = "readmitted=YES"))
 # use higher confidence for readmitted=NO to generate a reasonable number of rules
 rules_binary_NO <- apriori(readmission_trans_binary, parameter = list(supp = 0.004, conf = 0.85, target = "rules"), appearance = list(rhs = "readmitted=NO"))
 
-inspect(head(rules_under30, by = "lift")) # view rules for patients readmitted in under 30 days
-inspect(head(rules_over30, by = "lift")) # view rules for patients readmitted in over 30 days
-inspect(head(rules_NOT, by = "lift")) # view rules for patients not readmitted
+inspect(head(rules__binary_YES, by = "lift")) # view rules for patients readmitted in under 30 days
+inspect(head(rules_binary_NO, by = "lift")) # view rules for patients readmitted in over 30 days
+```
 
+```{r}
+# Use FSelector and LVQ to identify and remove attributes that are not significantly contributing as predictors of the target variable "readmitted".
 
-#library(reshape2)
+#use sample of approximately 10% of data because algorithm takes too long with full dataset running LVQ
+set.seed(136)
+readmission_sample <- readmission_all_cat[sample(1:nrow(readmission_all_cat), 7000), ]
 
-# Convert to a wide format with `dcast()` ... create new columns for each levels of categorical variable and populate with zeroes and ones to indicate if it applies to the particular observation
-#long_reshaped <- function (df, col_num) {
-#     dcast(df, 
-#           encounter_id + readmitted + . - df[[col_num]] ~ df[[col_num]], # retain all columns #except current one being processed
-#           fun.aggregate = length
-#           )
-#  return(df)
-#}
+# use FSelector information gain to determine most important attributes based on information gain
+att.scores <- information.gain(readmitted ~ ., readmission_sample)
+print(att.scores)
+cutoff.k(att.scores, k=20)
 
-#readmission_long <- readmission_all_cat
-#x <- long_reshaped(readmission_long, 2)
+# Use caret package and learning vector quantization (LVQ) to determine the most important attributes
+# prepare training scheme
+control <- trainControl(method="repeatedcv", number=5, repeats=2)
+# train the model
+lvq_model <- train(readmitted ~ ., data=readmission_sample, method="lvq", preProcess="scale", trControl=control)
+# estimate variable importance
+importance <- varImp(lvq_model, scale=FALSE)
+# summarize importance
+print(importance)
+# plot importance
+plot(importance)
+```
 
-# loop through all columns except encounter_id and readmitted class variable to create "market basket" of attributes for each encounter_id
-#for (i in (2:(ncol(readmission_all_cat)-1))) {  # use all columns except encounter_id and #readmitted
-#  df long_shaped()
-#}
-#long_reshaped
+```{r}
+#Split the data into training (80%) and test set (20%). Further split the training set in training and validation sets. Consider possibly treatment for imbalance in the target variable, readmitted.
+
+#Partition the dataset into training and test sets (use the discretized dataframe)
+set.seed(136)
+trainIndex <- createDataPartition(readmission_all_cat$readmitted, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+readmitted_train <- readmission_all_cat[trainIndex,] 
+readmitted_test <- readmission_all_cat[-trainIndex,] 
+
+#further split training into training and validation
+trainIndex2 <- createDataPartition(readmitted_train$readmitted, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+readmitted_train2 <- readmitted_train[trainIndex2,]
+readmitted_valid <- readmitted_train[-trainIndex2,]
+```
+
+```{r}
+# Apply various classification techniques (Naïve Bayes, decision tree, random forest, and support vector machines) to the data. First, use all attributes. Second, use only common attributes found in FSelector information gain and LVQ importance feature selection techniques from above.
+
+# *****
+# 
+# Function to generate model using cross validation and create confusion matrix.
+# Parameters passed to function are ml_type (NB for Naive Bayes, DT for decision tree, RF for random forest, and SV for support vector machines), num_folds (number of folds in cross validation), and readmitted_df (readmission data dataframe)
+# The function will create a total confusion matrix for the particular model being implemented by summing the confusion matrices of each of fold in the cross validation
+#
+generate_conf_matrix <- function (ml_type, num_folds, readmitted_df) {
+
+#Partition the dataset into training and test sets for cross-validation
+  set.seed(136)
+  trainIndex <- createFolds(readmitted_df$readmitted, k = num_folds, list = TRUE)
+  conf_matrix <- matrix(data = 0, nrow = nlevels(readmitted_df$readmitted), ncol = nlevels(readmitted_df$readmitted)) #initialize confusion matrix
+
+#Loop through all folds of cross validation, compute confusion matrix, keep running total
+  for (i in 1:num_folds) {
+    
+    readmitted_train <- readmitted_df[-trainIndex[[i]],] # use all folds except current index for training
+    readmitted_test <- readmitted_df[trainIndex[[i]],]   # use current index fold for test
+
+    if (ml_type == "NB") {model1 <- naiveBayes(readmitted ~ ., data = readmitted_train, laplace = 1)} 
+    else if (ml_type == "DT") {model1 <- J48(readmitted ~ ., data = readmitted_train)}
+    else if (ml_type == "RF") {model1 <- randomForest(readmitted ~ ., data=readmitted_train, ntree=100)}
+    else if (ml_type == "SV") {model1 <- svm(readmitted ~ ., data = readmitted_train, kernel = 'linear', gamma = 0.05, cost = 5)}
+    
+    # predict classes based on trained model for test data    
+    preds <- predict(model1, newdata = readmitted_test)
+    # generate confusion matrix    
+    new_conf_matrix <- table(preds, readmitted_test$readmitted)
+    # keep running total of conf_matrix to facilitate calculation of mean after loop finishes
+    conf_matrix <- conf_matrix + new_conf_matrix
+    }
+
+  # label and return confusion matrix
+  names(dimnames(conf_matrix)) <- c("Predicted Class", "Actual Class")
+  return(conf_matrix)
+  }
+```
+
+```{r}
+#calculate the accuracy and F1 score for a confusion matrix (cm). If binary class then use standard method for calculating accuracy and F1 score. If multiclass then use micro (one vs all) approach since class distribution is not even (note that for multiclass confusion matrix, micro precision, recall, and F1 are equal)
+calc_perf_meas <- function (cm) {
+  n_instances = sum(cm) # number of instances
+  n_classes = ncol(cm) # number of classes
+  n_correct = diag(cm) # number of correctly classified instances per class 
+  rowsums = apply(cm, 1, sum) # number of predictions per class
+  colsums = apply(cm, 2, sum) # number of instances per class
+  tp <- cm[1,1]
+  fp <- cm[1,2]
+  fn <- cm[2,1]
+
+  if (n_classes == 2) {
+      acc <- sum(n_correct) / n_instances                # accuracy
+      prec <- tp / (tp + fp)                        # precision
+      recall <- tp / (tp + fn)                      # recall
+      f1 <- 2 * prec * recall / (prec + recall)     # F1 score
+  } 
+  else if (n_classes > 2) {
+#one versus all matrices for each of the 3 class (<30, >30, NO) ... assumes each class in turn is positive
+      oneVsAll = lapply(1 : n_classes,    
+                      function(i){
+                        v = c(cm[i,i],
+                              rowsums[i] - cm[i,i],
+                              colsums[i] - cm[i,i],
+                              n_instances - rowsums[i] - colsums[i] + cm[i,i]);
+                        return(matrix(v, nrow = 2, byrow = TRUE))})
+      sum_cm = matrix(0, nrow = 2, ncol = 2)
+      for(i in 1 : n_classes){sum_cm = sum_cm + oneVsAll[[i]]}  # add up confusion matrices for classes
+   
+      acc <- sum(diag(sum_cm)) / sum(sum_cm)  # average micro accuracy
+      f1 <- sum_cm[1,1] / sum(sum_cm[1,])      #find the micro average F1 score = precision = recall 
+  }
+  perf_measures <- list ("Accuracy" = acc, "F1 Score" = f1)
+  return(perf_measures)
+}
+```
+
+```{r}
+# Function to run models (uses cross-validation on the training data sent to the function). Parameters passed to function are the dataframe to be used and codes for which models to be run (NB, DT, RF, SV). Use tictoc function to record runtime.
+
+run_models <- function (df, models_to_use) {
+
+  num_folds <- 4  # set number of folds for cross-validation
+  perf_measures_NB <- list ("Accuracy" = 0, "F1 Score" = 0) # initialize performance measures lists
+  perf_measures_DT <- list ("Accuracy" = 0, "F1 Score" = 0)
+  perf_measures_RF <- list ("Accuracy" = 0, "F1 Score" = 0)
+  perf_measures_SV <- list ("Accuracy" = 0, "F1 Score" = 0)
+
+    if ("NB" %in% models_to_use) {
+#
+# Naive Bayes
+#
+      tic("Naive Bayes - All attributes")
+      conf_matrix <- generate_conf_matrix ("NB", num_folds, df)
+      toc()
+      conf_matrix
+      perf_measures_NB <- format(calc_perf_meas (conf_matrix), digits = 3)
+      perf_measures_NB
+    }
+
+    if ("DT" %in% models_to_use) {
+#
+# Decision Tree
+#
+      tic("Decision Tree - All attributes")
+      conf_matrix <- generate_conf_matrix ("DT", num_folds, df)
+      toc()
+      conf_matrix
+      perf_measures_DT <- format(calc_perf_meas (conf_matrix), digits = 3)
+      perf_measures_DT
+    }
+
+    if ("RF" %in% models_to_use) {
+#
+# Random forest
+#
+      tic("Random Forest - All attributes")
+      conf_matrix <- generate_conf_matrix ("RF", num_folds, df)
+      toc()
+      conf_matrix
+      perf_measures_RF <- format(calc_perf_meas (conf_matrix), digits = 3)
+      perf_measures_RF
+    }
+  
+    if ("SV" %in% models_to_use) {  
+#
+# Support Vector Machine
+#
+      tic("Support Vector Machine - All attributes")
+      conf_matrix <- generate_conf_matrix ("SV", num_folds, df)
+      toc()
+      conf_matrix
+      perf_measures_SV <- format(calc_perf_meas (conf_matrix), digits = 3)
+      perf_measures_SV
+    }
+  perf_measures <- list (NB = perf_measures_NB, DT = perf_measures_DT, RF = perf_measures_RF, SV = perf_measures_SV)
+  return(perf_measures)
+}
+```
+
+```{r}
+#
+# Run the models using all attributes.
+#
+perf_measures <- run_models(readmitted_train2, c("NB", "DT", "RF")) # not using SV because it takes too long
+perf_measures
 
 ```
 
 ```{r}
-# Use R package FSelector to identify and remove attributes that are not significantly contributing as predictors of the target variable "readmitted".
+#
+# Run the models using attributes determined from feature selection: number_inpatient, discharge_disposition_id, age, number_diagnoses, num_lab_procedures, time_in_hospital, diag_2, diabetesMed 
+reduced_attrib_vector <- c('number_inpatient', 'discharge_disposition_id', 'age', 'number_diagnoses', 'num_lab_procedures', 'time_in_hospital', 'diag_2', 'diabetesMed', 'readmitted')
+reduced_df <- readmitted_train2[, reduced_attrib_vector]
+
+perf_measures <- run_models(reduced_df, c("NB", "DT", "RF"))
+perf_measures
 ```
 
 ```{r}
-#Split the data into training (80%) and test set (20%). Consider possibly treatment for imbalance in the target variable, readmitted.
+#
+# Run the models using a binary class attribute for readmitted (readmitted or not)
+#
+# partition the readmission data with binary class attribute into training and test sets using same index created previously for multiclass data
+readmitted_binary_train <- readmission_binary_class[trainIndex,] 
+readmitted_binary_test <- readmission_binary_class[-trainIndex,] 
+# subset the training set further into training and validation sets
+readmitted_binary_train2 <- readmitted_binary_train[trainIndex2,]
+readmitted_binary_valid <- readmitted_binary_train[-trainIndex2,]
+
+#
+# Run the models using attributes determined from feature selection:
+#
+reduced_binary_df <- readmitted_binary_train2[, reduced_attrib_vector]
+
+perf_measures <- run_models(reduced_binary_df, c("NB", "DT", "RF", "SV"))
+perf_measures
 ```
 
 ```{r}
-# Apply various classification techniques (Naïve Bayes, decision tree, random forest, and support vector machines) to the data. 
-
-# Compare the efficiency of the various techniques by looking at the run time. 
-
-#Determine the most effective model using performance measures
-# Use F1 score
-# Use accuracy
-
+#
 #	Experiment with various numbers of folds in cross-validation to find the optimal number for the training set (graph performance measures against number of cross-validation folds to determine where number of folds stabilizes)
+max_folds <- 10
+# set up plot
+plot(1, type="n", xlab="Number of Folds", ylab="Performance Meaures", xlim=c(0, 10), ylim=c(0.5, 0.8))
+title(main = "Naive Bayes: Accuracy & F1 Scores vs Number of CV Folds")
+legend(0, 0.4, legend=c("Accuracy", "F1 Score"),col=c("red", "blue"))
+  #
+  # Naive Bayes on reduced set
+  #
+for (nf in 2:max_folds) {
+  conf_matrix <- generate_conf_matrix ("NB", nf, reduced_df)
+  perf_measures <- format(calc_perf_meas (conf_matrix), digits = 3)
+  points(x = nf, y = perf_measures[1], col = "red", pch = 15)   # plot accuracy for current number of folds
+  points(x = nf, y = perf_measures[2], col = "blue", pch = 19)   # plot F1 Score for current number of folds
+}
+  #
+  # Decision tree on reduced set
+  #
+# set up plot
+plot(1, type="n", xlab="Number of Folds", ylab="Performance Meaures", xlim=c(0, 10), ylim=c(0.5, 0.8))
+title(main = "Decision Tree: Accuracy & F1 Scores vs Number of CV Folds")
+legend(0, 0.4, legend=c("Accuracy", "F1 Score"),col=c("red", "blue"))
+
+for (nf in 2:max_folds) {
+  conf_matrix <- generate_conf_matrix ("DT", nf, reduced_df)
+  perf_measures <- format(calc_perf_meas (conf_matrix), digits = 3)
+  points(x = nf, y = perf_measures[1], col = "red", pch = 15)   # plot accuracy for current number of folds
+  points(x = nf, y = perf_measures[2], col = "blue", pch = 19)   # plot F1 Score for current number of folds
+}
+```
+
+```{r}
+# Balance the training dataset by undersampling the majority classes and rerun models to see if that improves accuracy and F1 scores. Models tested using validation set rather than CV.
+# Use the number of observations from the smallest class (readmitted <30) as number randomly selected from other classes
+n_smallest_class <- length(readmitted_train2$readmitted[readmitted_train2$readmitted=="<30"])
+readmitted_balanced <- readmitted_train2 %>% group_by(readmitted) %>% sample_n(n_smallest_class)
+#
+# Run the models using the balanced dataset on the reduced attribute set
+# Use validation set to test effectiveness of trained models on the reduced attribute set for all models
+
+reduced_balanced_train <- readmitted_balanced[, reduced_attrib_vector]
+reduced_valid_df <- readmitted_valid[, reduced_attrib_vector]
+
+# Naive Bayes
+model2 <- naiveBayes(readmitted ~ ., data = reduced_balanced_train, laplace = 1)
+# predict classes based on trained model for test data    
+preds <- predict(model2, newdata = reduced_valid_df)
+# generate confusion matrix    
+conf_matrix <- table(preds, reduced_valid_df$readmitted)
+names(dimnames(conf_matrix)) <- c("Predicted Class", "Actual Class")
+conf_matrix
+perf_measures <- format(calc_perf_meas(conf_matrix), digits = 3)
+perf_measures
+
+# Decision tree
+model2 <- J48(readmitted ~ ., data = reduced_balanced_train)
+# predict classes based on trained model for test data    
+preds <- predict(model2, newdata = reduced_valid_df)
+# generate confusion matrix    
+conf_matrix <- table(preds, reduced_valid_df$readmitted)
+names(dimnames(conf_matrix)) <- c("Predicted Class", "Actual Class")
+conf_matrix
+perf_measures <- format(calc_perf_meas(conf_matrix), digits = 3)
+perf_measures
+
+# Random Forest
+model2 <- randomForest(readmitted ~ ., data=reduced_balanced_train, ntree=100)
+# predict classes based on trained model for test data    
+preds <- predict(model2, newdata = reduced_valid_df)
+# generate confusion matrix    
+conf_matrix <- table(preds, reduced_valid_df$readmitted)
+names(dimnames(conf_matrix)) <- c("Predicted Class", "Actual Class")
+conf_matrix
+perf_measures <- format(calc_perf_meas(conf_matrix), digits = 3)
+perf_measures
+
+# Support Vector Machine
+model2 <- svm(readmitted ~ ., data = reduced_balanced_train, kernel = 'linear', gamma = 0.05, cost = 5)
+# predict classes based on trained model for test data    
+preds <- predict(model2, newdata = reduced_valid_df)
+# generate confusion matrix    
+conf_matrix <- table(preds, reduced_valid_df$readmitted)
+names(dimnames(conf_matrix)) <- c("Predicted Class", "Actual Class")
+conf_matrix
+perf_measures <- format(calc_perf_meas(conf_matrix), digits = 3)
+perf_measures
+```
+
+```{r}
+# Balance class attribute after converting to binary class (combine >30 and NOT classes ... i.e. either readmitted under 30 days or not at all). Run models after balancing.
+readmission_binary_class <- readmitted_train
+readmission_binary_class$readmitted <- factor(ifelse(readmission_binary_class$readmitted == "<30", "YES", "NO"))
+readmission_binary_class$readmitted <- relevel(readmission_binary_class$readmitted, "YES")
+#
+# Use SMOTE to balance the classes
+t <- table(readmission_binary_class$readmitted) # table with number in each class
+o_balance_factor <- round(100 * (max(t[1], t[2]) - min(t[1], t[2])) / (min(t[1], t[2]))) # factor for perc.over in smote algorithm to create enough observations to balance dataset
+u_balance_factor <- round( 100 * max(t[1], t[2]) / (max(t[1], t[2]) - min(t[1], t[2]))) # factor for perc.under in smote algorithm to keep the majority class with the same number of observations as before
+readmission_balanced <- SMOTE(readmitted ~ ., readmission_binary_class, perc.over = o_balance_factor, perc.under = u_balance_factor)
+# Run models (Naive Bayes, decision tree, random forests) using cross-validation on balanced dataset with all attributes
+perf_measures <- run_models(readmitted_balanced, c("NB", "DT", "RF"))
+perf_measures
+
 ```
 ```{r}
 # Generalize the results of the classification using bagging and stacking ensemble techniques.
 # Apply the final generalized model to the test data set.
 
-```
-
-```{r}
-# Interpret the results of the association rules and the classification algorithms in terms of hospital readmission. Identify attributes that contribute to hospital readmission for diabetic patients. Compare the results with other analyses of these data.
 ```
