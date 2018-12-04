@@ -13,34 +13,40 @@ output:
 #install.packages("pastecs")
 #install.packages("corrplot")
 #install.packages("moments")
-#install.packages("rcompanion")
+#install.packages("rcompanion")    # required for transformTukey function
 #install.packages("dplyr")
 #install.packages("e1071")
-#install.packages("Rfast")
-#install.packages("FSelector")
+#install.packages("FSelector")    # required for FSelector and RWeka libraries
 #install.packages("mlbench")
-#install.packages("dplyr")
 #install.packages("tictoc")
 #install.packages("DMwR")
+#install.packages("RWeka")
+#install.packages("randomForest")
+#install.packages("mlbench")
+#install.packages("DescTools")    # g-test goodness of fit
+#install.packages("arules")
+#install.packages("fastAdaboost")
 
-library("pastecs")
-library("summarytools")
-library("Hmisc")
-library("corrplot")
-library("moments")
-library("rcompanion")
+library("pastecs")        # required for stat.desc function for summary statistics
+# library("summarytools")
+library("Hmisc")          # describe function for summary statistics
+library("corrplot")       # corrplot function to plot correlation graphics
+# library("moments")
+library("rcompanion")     # required for transformTukey function
 library("plyr")
-library("dplyr")
-library("FSelector")
+library("dplyr")          # required for %>% pipe
+library("FSelector")      # feature selection algorithm
 library("mlbench")
-library("caret")
-library("Rfast")
-library("arules")
-library("e1071")
-library("RWeka")
-library("randomForest")
-library("tictoc")
-library("DMwR")
+library("caret")          # used for createPartition, 
+# library("Rfast")
+library("arules")         # association rules ... apriori
+library("e1071")          # required for naivebayes algorithm
+library("RWeka")          # required for J48 decision tree algorithm
+library("randomForest")   # required for randomForest algorithm
+library("tictoc")         # used to measure runtime of code
+library("DMwR")           # required for SMOTE
+library("DescTools")      # required for G-test ... goodness of fit
+library("fastAdaboost")   # required for Adaboost ensemble package
 ```
 
 ```{r}
@@ -325,6 +331,9 @@ summary (readmission_data$medical_specialty)
 # drop all medication attributes (due to data sparseness) except insulin
 readmission_data <- subset(readmission_data, select = -c(24:40,42:46))
 
+# drop patient_nbr and encounter_id since these are unique for each observation
+readmission_data <- subset(readmission_data, select = -c(encounter_id, patient_nbr))
+
 # gender
 summary (readmission_data$gender)
 
@@ -368,8 +377,6 @@ for (cat_var in (1:ncol(cat_vars))){
 
 # Numerical variables (use stat.desc function of pastecs package to display summary)
 num_vars <- readmission_data[, !a]
-# Do not include the encounter_id or the patient_nbr
-num_vars <- subset(num_vars, select = -c(1,2))
 options(scipen=100)
 options(digits=1)
 stat.desc(num_vars)
@@ -414,7 +421,6 @@ levels(readmission_data$number_diagnoses)[levels(readmission_data$number_diagnos
 a<- (sapply(readmission_data,class) == "factor")
 cat_vars <- readmission_data[, a]
 num_vars <- readmission_data[, !a]
-num_vars <- subset(num_vars, select = -c(1,2))
 Hmisc::describe(cat_vars[15])
 barplot(table(cat_vars[15]), main = names(cat_vars[15]), las=2)
 
@@ -450,11 +456,11 @@ num_num_vars <- ncol(num_vars)
 
 for (i in 1:(num_cat_vars - 1)){
   for (j in (i + 1) : num_cat_vars) {
-    gtest <- gchi2Test(cat_vars[,i], cat_vars[,j])
-    if (gtest[2,2] <= 0.05) {
-      print (paste(names(cat_vars[i]), " and ", names(cat_vars[j]), " are not independent.", format(gtest[2,2], digits = 4)))
+    gtest <- GTest(cat_vars[,i], cat_vars[,j])
+    if (gtest$p.value <= 0.05) {
+      print (paste(names(cat_vars[i]), " and ", names(cat_vars[j]), " are not independent.", format(gtest$p.value, digits = 4)))
     } else {
-      print (paste(names(cat_vars[i]), " and ", names(cat_vars[j]), " are independent.", format(gtest[2,2], digits = 4)))
+      print (paste(names(cat_vars[i]), " and ", names(cat_vars[j]), " are independent.", format(gtest$p.value, digits = 4)))
     }
   } 
 }
@@ -474,7 +480,16 @@ for (i in (1 : num_num_vars)) {
 ```
 
 ```{r}
-# Create a categorical only dataset. Discretize continuous variables using interval = square root of the range and convert to factors
+# Normalize the numerical attributes to assist support vector machine algorithm (since it uses a distance measure)
+n <- !(sapply(readmission_data,class) == "factor") # numeric attributes
+min_values <- sapply(readmission_data[, n], min)  # store minimum values for future "unscaling"
+max_values <- sapply(readmission_data[, n], max)  # store maxmimum values for future "unscaling"
+readmission_data[, n] <- sapply(readmission_data[, n], function(x) {(x - min(x)) / (max(x) - min(x))})
+
+```
+
+```{r}
+# Create a categorical only dataset. Discretize continuous variables using interval = square root of the range and convert to factors. This is required to convert dataset to transactions for apriori arules algorithm
 num_vars_disc <- num_vars
 discretize <- function (df_column) {
 
@@ -512,14 +527,14 @@ inspect(head(rules_NOT, by = "lift")) # view rules for patients not readmitted
 ```
 
 ```{r}
-# combine readmitted<=30 and readmitted>=30 to create a binary class dataset
-readmission_binary_class <- readmission_all_cat
-readmission_binary_class$readmitted <- factor(ifelse(readmission_binary_class$readmitted == "NO","NO","YES"))
+# combine readmitted<=30 and readmitted>=30 to create a binary class categorical dataset
+readmission_binary_cat <- readmission_all_cat
+readmission_binary_cat$readmitted <- factor(ifelse(readmission_binary_cat$readmitted == "NO","NO","YES"))
 ```
 
 ```{r}
 # Using the binary class dataset, determine association rules for simply readmitted or not
-readmission_trans_binary <- as(readmission_binary_class, "transactions")
+readmission_trans_binary <- as(readmission_binary_cat, "transactions")
 summary(readmission_trans_binary)
 itemLabels(readmission_trans_binary)
 # generate rules for "readmitted=YES"
@@ -538,41 +553,48 @@ inspect(head(rules_binary_NO, by = "lift")) # view rules for patients readmitted
 set.seed(136)
 readmission_sample <- readmission_all_cat[sample(1:nrow(readmission_all_cat), 7000), ]
 
-# use FSelector information gain to determine most important attributes based on information gain
+# use FSelector information gain to determine most important attributes based on information gain (print those values that are higher than the median)
 att.scores <- information.gain(readmitted ~ ., readmission_sample)
-print(att.scores)
-cutoff.k(att.scores, k=20)
+att.scores.sig <- att.scores[att.scores$attr_importance > median(att.scores$attr_importance),,drop = FALSE]
+top_F <- att.scores.sig[order(-att.scores.sig),,drop = FALSE]
 
 # Use caret package and learning vector quantization (LVQ) to determine the most important attributes
 # prepare training scheme
-control <- trainControl(method="repeatedcv", number=5, repeats=2)
+control <- trainControl(method="repeatedcv", number=3, repeats=2)
 # train the model
 lvq_model <- train(readmitted ~ ., data=readmission_sample, method="lvq", preProcess="scale", trControl=control)
 # estimate variable importance
 importance <- varImp(lvq_model, scale=FALSE)
-# summarize importance
-print(importance)
-# plot importance
 plot(importance)
+# create dataframe with the averages of importance for all three classes and keep only those above median
+top_L <- importance$importance
+top_L$average <- rowMeans(importance$importance)
+top_L <- subset(top_L, select = c("average"))
+importance.median <- median(top_L$average)
+top_L <- top_L[top_L$average > importance.median,, drop = FALSE]
+top_L <- top_L[order(-top_L),, drop = FALSE]
+
+# create list of attributes above median for both FSelector and LVQ
+top_F.names <- rownames(top_F)
+top_L.names <- rownames(top_L)
+for (i in 1:length(top_F.names)) {
+  if (top_F.names[i] %in% top_L.names) {print(top_F.names[i])}
+}
+
 ```
 
 ```{r}
-#Split the data into training (80%) and test set (20%). Further split the training set in training and validation sets. Consider possibly treatment for imbalance in the target variable, readmitted.
+#Split the data into training (80%) and test set (20%). Consider possibly treatment for imbalance in the target variable, readmitted.
 
 #Partition the dataset into training and test sets (use the discretized dataframe)
 set.seed(136)
-trainIndex <- createDataPartition(readmission_all_cat$readmitted, p = .8, 
+trainIndex <- createDataPartition(readmission_data$readmitted, p = .8, 
                                   list = FALSE, 
                                   times = 1)
-readmitted_train <- readmission_all_cat[trainIndex,] 
-readmitted_test <- readmission_all_cat[-trainIndex,] 
 
-#further split training into training and validation
-trainIndex2 <- createDataPartition(readmitted_train$readmitted, p = .8, 
-                                  list = FALSE, 
-                                  times = 1)
-readmitted_train2 <- readmitted_train[trainIndex2,]
-readmitted_valid <- readmitted_train[-trainIndex2,]
+readmitted_train <- readmission_data[trainIndex,] 
+readmitted_test <- readmission_data[-trainIndex,] 
+
 ```
 
 ```{r}
@@ -594,18 +616,18 @@ generate_conf_matrix <- function (ml_type, num_folds, readmitted_df) {
 #Loop through all folds of cross validation, compute confusion matrix, keep running total
   for (i in 1:num_folds) {
     
-    readmitted_train <- readmitted_df[-trainIndex[[i]],] # use all folds except current index for training
-    readmitted_test <- readmitted_df[trainIndex[[i]],]   # use current index fold for test
+    r_train <- readmitted_df[-trainIndex[[i]],] # use all folds except current index for training
+    r_test <- readmitted_df[trainIndex[[i]],]   # use current index fold for test
 
-    if (ml_type == "NB") {model1 <- naiveBayes(readmitted ~ ., data = readmitted_train, laplace = 1)} 
-    else if (ml_type == "DT") {model1 <- J48(readmitted ~ ., data = readmitted_train)}
-    else if (ml_type == "RF") {model1 <- randomForest(readmitted ~ ., data=readmitted_train, ntree=100)}
-    else if (ml_type == "SV") {model1 <- svm(readmitted ~ ., data = readmitted_train, kernel = 'linear', gamma = 0.05, cost = 5)}
+    if (ml_type == "NB") {model1 <- naiveBayes(readmitted ~ ., data = r_train, laplace = 1)} 
+    else if (ml_type == "DT") {model1 <- J48(readmitted ~ ., data = r_train)}
+    else if (ml_type == "RF") {model1 <- randomForest(readmitted ~ ., data=r_train, ntree=100)}
+    else if (ml_type == "SV") {model1 <- svm(readmitted ~ ., data = r_train, kernel = 'linear', gamma = 0.05, cost = 5)}
     
     # predict classes based on trained model for test data    
-    preds <- predict(model1, newdata = readmitted_test)
+    preds <- predict(model1, newdata = r_test)
     # generate confusion matrix    
-    new_conf_matrix <- table(preds, readmitted_test$readmitted)
+    new_conf_matrix <- table(preds, r_test$readmitted)
     # keep running total of conf_matrix to facilitate calculation of mean after loop finishes
     conf_matrix <- conf_matrix + new_conf_matrix
     }
@@ -721,7 +743,7 @@ run_models <- function (df, models_to_use) {
 #
 # Run the models using all attributes.
 #
-perf_measures <- run_models(readmitted_train2, c("NB", "DT", "RF")) # not using SV because it takes too long
+perf_measures <- run_models(readmitted_train, c("NB", "DT", "RF")) # not using SV because it takes too long
 perf_measures
 
 ```
@@ -729,11 +751,20 @@ perf_measures
 ```{r}
 #
 # Run the models using attributes determined from feature selection: number_inpatient, discharge_disposition_id, age, number_diagnoses, num_lab_procedures, time_in_hospital, diag_2, diabetesMed 
-reduced_attrib_vector <- c('number_inpatient', 'discharge_disposition_id', 'age', 'number_diagnoses', 'num_lab_procedures', 'time_in_hospital', 'diag_2', 'diabetesMed', 'readmitted')
-reduced_df <- readmitted_train2[, reduced_attrib_vector]
+reduced_attrib_vector <- c('number_inpatient', 'discharge_disposition_id', 'age', 'number_diagnoses', 'num_lab_procedures', 'time_in_hospital', 'diag_2', 'diabetesMed', 'payer_code', 'number_outpatient', 'readmitted')
+reduced_df <- readmitted_train[, reduced_attrib_vector]
 
-perf_measures <- run_models(reduced_df, c("NB", "DT", "RF"))
+perf_measures <- run_models(reduced_df, c("NB", "DT", "RF", "SV"))
 perf_measures
+```
+```{r}
+# combine readmitted<=30 and readmitted>=30 to create a binary class dataset
+readmission_binary_class <- readmission_data
+readmission_binary_class$readmitted <- factor(ifelse(readmission_binary_class$readmitted == "NO","NO","YES"))
+t<-table(readmission_binary_class$readmitted)
+p<- t/sum(t)
+t
+p
 ```
 
 ```{r}
@@ -743,16 +774,17 @@ perf_measures
 # partition the readmission data with binary class attribute into training and test sets using same index created previously for multiclass data
 readmitted_binary_train <- readmission_binary_class[trainIndex,] 
 readmitted_binary_test <- readmission_binary_class[-trainIndex,] 
-# subset the training set further into training and validation sets
-readmitted_binary_train2 <- readmitted_binary_train[trainIndex2,]
-readmitted_binary_valid <- readmitted_binary_train[-trainIndex2,]
-
 #
-# Run the models using attributes determined from feature selection:
+# Run the models on the full attribute dataset (uses cross validation on the training set):
 #
-reduced_binary_df <- readmitted_binary_train2[, reduced_attrib_vector]
+perf_measures <- run_models(readmitted_binary_train, c("NB", "DT", "RF"))
+perf_measures
+#
+# Run the models using attributes determined from feature selection (uses cross validation on the training set):
+#
+reduced_binary_df <- readmitted_binary_train[, reduced_attrib_vector]
 
-perf_measures <- run_models(reduced_binary_df, c("NB", "DT", "RF", "SV"))
+perf_measures <- run_models(reduced_binary_df, c("NB", "DT", "RF"))
 perf_measures
 ```
 
@@ -790,80 +822,195 @@ for (nf in 2:max_folds) {
 ```
 
 ```{r}
-# Balance the training dataset by undersampling the majority classes and rerun models to see if that improves accuracy and F1 scores. Models tested using validation set rather than CV.
+# Balance the multiclass training dataset by undersampling the majority classes and rerun models to see if that improves accuracy and F1 scores.
 # Use the number of observations from the smallest class (readmitted <30) as number randomly selected from other classes
-n_smallest_class <- length(readmitted_train2$readmitted[readmitted_train2$readmitted=="<30"])
-readmitted_balanced <- readmitted_train2 %>% group_by(readmitted) %>% sample_n(n_smallest_class)
+n_smallest_class <- length(readmitted_train$readmitted[readmitted_train$readmitted=="<30"])
+readmitted_balanced <- as.data.frame(readmitted_train %>% group_by(readmitted) %>% sample_n(n_smallest_class))
 #
-# Run the models using the balanced dataset on the reduced attribute set
-# Use validation set to test effectiveness of trained models on the reduced attribute set for all models
-
-reduced_balanced_train <- readmitted_balanced[, reduced_attrib_vector]
-reduced_valid_df <- readmitted_valid[, reduced_attrib_vector]
-
-# Naive Bayes
-model2 <- naiveBayes(readmitted ~ ., data = reduced_balanced_train, laplace = 1)
-# predict classes based on trained model for test data    
-preds <- predict(model2, newdata = reduced_valid_df)
-# generate confusion matrix    
-conf_matrix <- table(preds, reduced_valid_df$readmitted)
-names(dimnames(conf_matrix)) <- c("Predicted Class", "Actual Class")
-conf_matrix
-perf_measures <- format(calc_perf_meas(conf_matrix), digits = 3)
+# Run the models using the balanced dataset on the full attribute set (uses cross-validation)
+perf_measures <- run_models(readmitted_balanced, c("NB", "DT", "RF"))
 perf_measures
-
-# Decision tree
-model2 <- J48(readmitted ~ ., data = reduced_balanced_train)
-# predict classes based on trained model for test data    
-preds <- predict(model2, newdata = reduced_valid_df)
-# generate confusion matrix    
-conf_matrix <- table(preds, reduced_valid_df$readmitted)
-names(dimnames(conf_matrix)) <- c("Predicted Class", "Actual Class")
-conf_matrix
-perf_measures <- format(calc_perf_meas(conf_matrix), digits = 3)
-perf_measures
-
-# Random Forest
-model2 <- randomForest(readmitted ~ ., data=reduced_balanced_train, ntree=100)
-# predict classes based on trained model for test data    
-preds <- predict(model2, newdata = reduced_valid_df)
-# generate confusion matrix    
-conf_matrix <- table(preds, reduced_valid_df$readmitted)
-names(dimnames(conf_matrix)) <- c("Predicted Class", "Actual Class")
-conf_matrix
-perf_measures <- format(calc_perf_meas(conf_matrix), digits = 3)
-perf_measures
-
-# Support Vector Machine
-model2 <- svm(readmitted ~ ., data = reduced_balanced_train, kernel = 'linear', gamma = 0.05, cost = 5)
-# predict classes based on trained model for test data    
-preds <- predict(model2, newdata = reduced_valid_df)
-# generate confusion matrix    
-conf_matrix <- table(preds, reduced_valid_df$readmitted)
-names(dimnames(conf_matrix)) <- c("Predicted Class", "Actual Class")
-conf_matrix
-perf_measures <- format(calc_perf_meas(conf_matrix), digits = 3)
+#
+# Run the models using the balanced dataset on the reduced attribute set (uses cross-validation)
+reduced_balanced <- readmitted_balanced[, reduced_attrib_vector]
+perf_measures <- run_models(reduced_balanced, c("NB", "DT", "RF"))
 perf_measures
 ```
 
 ```{r}
-# Balance class attribute after converting to binary class (combine >30 and NOT classes ... i.e. either readmitted under 30 days or not at all). Run models after balancing.
+# Convert to binary class (combine >30 and NOT classes ... i.e. either readmitted under 30 days or not at all).
 readmission_binary_class <- readmitted_train
 readmission_binary_class$readmitted <- factor(ifelse(readmission_binary_class$readmitted == "<30", "YES", "NO"))
 readmission_binary_class$readmitted <- relevel(readmission_binary_class$readmitted, "YES")
+table(readmission_binary_class$readmitted)
+```
+
+```{r}
+# Balance the binary class training dataset by undersampling the majority class and then run models.
+# Use the number of observations from the smallest class (readmitted <30) as number randomly selected from other class
+n_smallest_class <- length(readmission_binary_class$readmitted[readmission_binary_class$readmitted == "YES"])
+readmitted_balanced1 <- as.data.frame(readmission_binary_class %>% group_by(readmitted) %>% sample_n(n_smallest_class))
+#
+# Run the models using the balanced dataset on the full attribute set (uses cross-validation)
+perf_measures <- run_models(readmitted_balanced1, c("NB", "DT", "RF"))
+perf_measures
+#
+# Run the models using the balanced dataset on the reduced attribute set (uses cross-validation)
+reduced_balanced1 <- readmitted_balanced1[, reduced_attrib_vector]
+perf_measures <- run_models(reduced_balanced1, c("NB", "DT", "RF"))
+perf_measures
+```
+
+```{r}
+# Balance the binary class training dataset using SMOTE (oversample minority class) and then run models.
 #
 # Use SMOTE to balance the classes
 t <- table(readmission_binary_class$readmitted) # table with number in each class
 o_balance_factor <- round(100 * (max(t[1], t[2]) - min(t[1], t[2])) / (min(t[1], t[2]))) # factor for perc.over in smote algorithm to create enough observations to balance dataset
 u_balance_factor <- round( 100 * max(t[1], t[2]) / (max(t[1], t[2]) - min(t[1], t[2]))) # factor for perc.under in smote algorithm to keep the majority class with the same number of observations as before
-readmission_balanced <- SMOTE(readmitted ~ ., readmission_binary_class, perc.over = o_balance_factor, perc.under = u_balance_factor)
+readmitted_balanced2 <- SMOTE(readmitted ~ ., readmission_binary_class, perc.over = o_balance_factor, perc.under = u_balance_factor)
 # Run models (Naive Bayes, decision tree, random forests) using cross-validation on balanced dataset with all attributes
-perf_measures <- run_models(readmitted_balanced, c("NB", "DT", "RF"))
+perf_measures <- run_models(readmitted_balanced2, c("NB", "DT", "RF"))
 perf_measures
-
+#
+# Run models (Naive Bayes, decision tree, random forests) using cross-validation on balanced dataset with reduced attribute set
+reduced_balanced2 <- readmitted_balanced2[, reduced_attrib_vector]
+perf_measures <- run_models(reduced_balanced2, c("NB", "DT", "RF"))
+perf_measures
 ```
+
 ```{r}
-# Generalize the results of the classification using bagging and stacking ensemble techniques.
-# Apply the final generalized model to the test data set.
+# Generalize the results of the classification using boosting ensemble technique.
+#
+# function to create boost ensemble for given dataframe
+boost_fun <- function (dframe, iters) {
+  
+  # split dataframe into training and test set
+  set.seed(136)
+  ti <- createDataPartition(dframe$readmitted, p = .8, list = FALSE, times = 1)
+
+  btrain <- dframe[ti,] # training set
+  btest <- dframe[-ti,] # testing set
+
+  model_adaboost <- adaboost(readmitted ~ ., btrain, iters) # run adaboost ensemble algorithm
+  pred <- predict(model_adaboost, newdata=btest) # predict values for test set
+  pred$class <- relevel(pred$class, "YES") # make the "YES" class appear first
+  conf_mat <- table(pred$class,btest$readmitted) # create confusion matrix
+  perf_measures <- calc_perf_meas(conf_mat)
+  return(perf_measures)
+  }
+```
+
+```{r}
+# optimize iterations for boost ensemble (use reduced SMOTE dataset)
+max_iters <- 10
+# set up plot
+plot(1, type="n", xlab="Number of Folds", ylab="Performance Meaures", xlim=c(0, 10), ylim=c(0, 1))
+title(main = "Boost: Accuracy & F1 Scores vs Number of Iterations")
+legend(0, 0.4, legend=c("Accuracy", "F1 Score"),col=c("red", "blue"))
+
+for (ni in 1:max_iters) {
+  tic(paste("number of iterations", ni))
+  perf_measures <- boost_fun(reduced_balanced2, ni)
+  toc()
+  points(x = ni, y = perf_measures[1], col = "red", pch = 15)   # plot acc. for current number of iterations
+  points(x = ni, y = perf_measures[2], col = "blue", pch = 19)   # plot F1 for current number of iterations
+}
+```
+
+```{r}
+# boost ensemble for binary class data, unbalanced, full attribute set
+tic("Boost Ensemble - Unbalanced, binary, all attributes")
+perf_measures <- boost_fun(readmission_binary_class, 7)
+toc()
+format(perf_measures, digits = 3)
+
+# boost ensemble for binary class data, unbalanced, reduced attribute set
+tic("Boost Ensemble - Unbalanced, binary, reduced attribute set")
+perf_measures <- boost_fun(readmission_binary_class[, reduced_attrib_vector], 7)
+toc()
+format(perf_measures, digits = 3)
+
+# boost ensemble for balanced (undersampling majority) binary class data full attribute set
+tic("Boost Ensemble - Balanced (undersampling), binary, all attributes")
+perf_measures <- boost_fun(readmitted_balanced1, 7)
+toc()
+format(perf_measures, digits = 3)
+
+# boost ensemble for balanced (undersampling majority) binary class data reduced attribute set
+tic("Boost Ensemble - Balanced (undersampling), binary, reduced attribute set")
+perf_measures <- boost_fun(reduced_balanced1, 7)
+toc()
+format(perf_measures, digits = 3)
+
+# boost ensemble for balanced (synthetic oversampling minority) binary class data full attribute set
+tic("Boost Ensemble - Balanced (SMOTE), binary, all attributes")
+perf_measures <- boost_fun(readmitted_balanced2, 7)
+toc()
+format(perf_measures, digits = 3)
+
+# boost ensemble for balanced (synthetic oversampling minority) binary class data reduced attribute set
+tic("Boost Ensemble - Balanced (SMOTE), binary, reduced attribute set")
+perf_measures <- boost_fun(reduced_balanced2, 7)
+toc()
+format(perf_measures, digits = 3)
+```
+
+```{r}
+# Use the test dataset to test the four best models
+#
+# Random forest on multiclass reduced attribute dataset
+reduced_test <- readmitted_test[, reduced_attrib_vector]
+tic("Random forest on multiclass full attribute dataset")
+model1 <- randomForest(readmitted ~ ., data=readmitted_train[, reduced_attrib_vector], ntree=100)
+preds1 <- predict(model1, newdata = reduced_test)
+toc()
+conf_matrix1 <- table(preds1, reduced_test$readmitted)
+names(dimnames(conf_matrix1)) <- c("Predicted Class", "Actual Class")
+perf_measures <- calc_perf_meas(conf_matrix1)
+format(perf_measures, digits = 3)
+#
+# Create a binary class version of test dataset
+readmitted_binary_test <- readmitted_test
+readmitted_binary_test$readmitted <- factor(ifelse(readmitted_binary_test$readmitted == "<30", "YES", "NO"))
+readmitted_binary_test$readmitted <- relevel(readmitted_binary_test$readmitted, "YES")
+#
+# Random forest on binary, SMOTE balanced, full attribute dataset
+tic("Random forest on binary, SMOTE balanced full attribute dataset")
+model2 <- randomForest(readmitted ~ ., data=readmitted_balanced2, ntree=100)
+preds2 <- predict(model2, newdata = readmitted_binary_test)
+toc()
+conf_matrix2 <- table(preds2, readmitted_binary_test$readmitted)
+names(dimnames(conf_matrix2)) <- c("Predicted Class", "Actual Class")
+perf_measures <- calc_perf_meas(conf_matrix2)
+format(perf_measures, digits = 3)
+#
+# Create a reduced attribute binary class version of test dataset
+reduced_binary_test <- readmitted_binary_test[, reduced_attrib_vector]
+#
+# Decision tree on binary, SMOTE balanced, reduced attribute dataset
+tic("Decision tree on binary, SMOTE balanced reduced attribute dataset")
+model3 <- J48(readmitted ~ ., data=readmitted_balanced2[, reduced_attrib_vector])
+preds3 <- predict(model3, newdata = reduced_binary_test)
+toc()
+conf_matrix3 <- table(preds3, reduced_binary_test$readmitted)
+names(dimnames(conf_matrix3)) <- c("Predicted Class", "Actual Class")
+perf_measures <- calc_perf_meas(conf_matrix3)
+format(perf_measures, digits = 3)
+#
+# Adaboost on binary, SMOTE balanced, full attribute dataset
+tic("Adaboost on binary, SMOTE balanced full attribute dataset")
+model4 <- adaboost(readmitted ~ ., data=readmitted_balanced2, 7)
+preds4 <- predict(model4, newdata = readmitted_binary_test)
+toc()
+preds4$class <- relevel(preds4$class, "YES") # make the "YES" class appear first
+conf_matrix4 <- table(preds4$class, readmitted_binary_test$readmitted)
+names(dimnames(conf_matrix4)) <- c("Predicted Class", "Actual Class")
+perf_measures <- calc_perf_meas(conf_matrix4)
+format(perf_measures, digits = 3)
+
+
+#
+# 
 
 ```
